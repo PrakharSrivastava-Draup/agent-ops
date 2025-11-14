@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     # Jenkins configuration
     aws_region: str = Field(default="us-east-2", env="AWS_REGION")
     jenkins_ssm_parameter: str = Field(default="jenkins", env="JENKINS_SSM_PARAMETER")
+    # User management database
+    user_db_path: str = Field(default="data/users.db", env="USER_DB_PATH")
 
     class Config:
         env_file = ".env"

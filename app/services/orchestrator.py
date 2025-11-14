@@ -60,11 +60,49 @@ class TaskOrchestrator:
                 if exc.trace_entry:
                     trace_entries.append(exc.trace_entry)
                 warnings.append(str(exc))
-                raise
+                # Continue to synthesis even if step failed, so we can provide a summary
+                self.logger.warning(
+                    "agent_step_failed_continuing",
+                    request_id=str(request_id),
+                    step_id=step.step_id,
+                    error=str(exc),
+                )
 
-        synthesis = await self._synthesize(request, plan_steps, trace_entries)
+        self.logger.info(
+            "synthesis_starting",
+            request_id=str(request_id),
+            trace_entries_count=len(trace_entries),
+            plan_steps_count=len(plan_steps),
+        )
+        try:
+            synthesis = await self._synthesize(request, plan_steps, trace_entries)
+        except Exception as exc:
+            self.logger.error(
+                "synthesis_failed",
+                request_id=str(request_id),
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            raise
 
-        final_result = FinalResult.parse_obj(synthesis["final_result"])
+        self.logger.info(
+            "synthesis_completed",
+            request_id=str(request_id),
+            has_final_result="final_result" in synthesis,
+        )
+        
+        try:
+            final_result = FinalResult.parse_obj(synthesis["final_result"])
+        except Exception as exc:
+            self.logger.error(
+                "final_result_parse_failed",
+                request_id=str(request_id),
+                error=str(exc),
+                error_type=type(exc).__name__,
+                synthesis_keys=list(synthesis.keys()) if isinstance(synthesis, dict) else None,
+            )
+            raise TaskExecutionError(f"Failed to parse final_result: {str(exc)}") from exc
+        
         synthesis_warnings = synthesis.get("warnings", [])
         if isinstance(synthesis_warnings, list):
             warnings.extend(str(item) for item in synthesis_warnings)

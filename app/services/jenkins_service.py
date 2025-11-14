@@ -12,7 +12,7 @@ import boto3
 import requests
 from botocore.exceptions import BotoCoreError, ClientError
 from requests.auth import HTTPBasicAuth
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin, urlparse
 
 from app.utils.logging import get_logger
 
@@ -46,6 +46,9 @@ class JenkinsService:
         """
         self.aws_region = aws_region
         self.ssm_parameter_name = ssm_parameter_name
+        self.aws_access_key_id = aws_access_key_id
+        self.aws_secret_access_key = aws_secret_access_key
+        self.aws_session_token = aws_session_token
         self.logger = logger
 
         # Initialize boto3 session
@@ -124,6 +127,39 @@ class JenkinsService:
             )
             raise JenkinsServiceError(f"Unexpected error fetching credentials: {e}") from e
 
+    def get_jenkins_crumb(self, jenkins_base_url: str, username: str, password: str) -> Optional[str]:
+        """
+        Fetch Jenkins CSRF crumb token.
+
+        Args:
+            jenkins_base_url: Base URL of Jenkins (e.g., https://13.59.177.177/jenkins)
+            username: Jenkins username
+            password: Jenkins password/token
+
+        Returns:
+            CSRF crumb token or None if not available
+        """
+        try:
+            crumb_url = urljoin(jenkins_base_url.rstrip("/") + "/", "crumbIssuer/api/xml?xpath=concat(//crumbRequestField,\":\",//crumb)")
+            auth = HTTPBasicAuth(username, password)
+            response = requests.get(crumb_url, auth=auth, timeout=10, verify=False)
+            self.logger.info("csrf_crumb_fetch_attempt", url=crumb_url, status_code=response.status_code)
+            if response.status_code == 200:
+                crumb = response.text.strip()
+                self.logger.info("csrf_crumb_raw_response", response_text=crumb[:100])
+                if ":" in crumb:
+                    crumb_value = crumb.split(":", 1)[1]
+                    self.logger.info("csrf_crumb_extracted", crumb_length=len(crumb_value))
+                    return crumb_value
+                else:
+                    self.logger.warning("csrf_crumb_no_colon", response_text=crumb[:100])
+            else:
+                self.logger.warning("csrf_crumb_fetch_failed", status_code=response.status_code, response_text=response.text[:200])
+            return None
+        except Exception as e:
+            self.logger.error("failed_to_fetch_crumb", error=str(e), error_type=type(e).__name__)
+            return None
+
     def trigger_jenkins_job(
         self,
         jenkins_url: str,
@@ -145,7 +181,9 @@ class JenkinsService:
             JenkinsServiceError: If job trigger fails
         """
         # Get credentials from SSM
+        self.logger.info("trigger_jenkins_job_started", jenkins_url=jenkins_url, build_with_params=build_with_params, has_parameters=bool(parameters))
         username, password = self.get_jenkins_credentials_from_ssm()
+        self.logger.info("credentials_obtained", username=username[:3] + "***" if username else None)
 
         # Determine the endpoint based on whether parameters are provided
         if build_with_params and parameters:
@@ -166,15 +204,15 @@ class JenkinsService:
             username=username,
         )
 
-        # Set up authentication (matching original jenkis.py script - no CSRF tokens)
+        # Set up authentication
         auth = HTTPBasicAuth(username, password)
 
-        # Prepare request
+        # Prepare request - matching jenkis.py logic exactly
         try:
             if build_with_params and parameters:
-                # POST with parameters - Jenkins buildWithParameters expects query string params
-                # Match the original jenkis.py script behavior exactly
-                self.logger.debug(
+                # POST with parameters - using params= like original jenkis.py script
+                # This sends parameters as query string (Jenkins accepts this)
+                self.logger.info(
                     "jenkins_request_details",
                     url=job_url,
                     params=parameters,
@@ -183,7 +221,7 @@ class JenkinsService:
                 response = requests.post(
                     job_url,
                     auth=auth,
-                    params=parameters,  # Query string parameters (as in original script)
+                    params=parameters,  # Query string parameters (matching jenkis.py)
                     timeout=30,
                     verify=False,  # Note: SSL verification disabled
                 )
@@ -191,6 +229,7 @@ class JenkinsService:
                     "jenkins_response_received",
                     status_code=response.status_code,
                     response_headers=dict(response.headers),
+                    response_text_preview=response.text[:200] if response.status_code != 201 else None,
                 )
             else:
                 # Simple POST to trigger build
@@ -202,6 +241,12 @@ class JenkinsService:
                 )
 
             # Check response
+            self.logger.info(
+                "jenkins_response_check",
+                status_code=response.status_code,
+                has_location_header="Location" in response.headers,
+                response_preview=response.text[:300] if response.status_code != 201 and response.status_code != 200 else None,
+            )
             if response.status_code == 201:
                 result = {
                     "success": True,
@@ -221,12 +266,15 @@ class JenkinsService:
                 self.logger.info("jenkins_job_triggered", status_code=200)
                 return result
             else:
-                error_msg = f"Failed to trigger Jenkins job. Status: {response.status_code}, Response: {response.text}"
+                # Log detailed error information
                 self.logger.error(
                     "jenkins_job_trigger_failed",
                     status_code=response.status_code,
-                    response_text=response.text[:500],  # Limit log size
+                    response_headers=dict(response.headers),
+                    response_text_preview=response.text[:500],
+                    request_url=job_url,
                 )
+                error_msg = f"Failed to trigger Jenkins job. Status: {response.status_code}, Response: {response.text[:500]}"
                 raise JenkinsServiceError(error_msg)
         except requests.exceptions.RequestException as e:
             self.logger.error("jenkins_request_failed", error=str(e), error_type=type(e).__name__)
