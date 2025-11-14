@@ -4,9 +4,10 @@ API routes for user management operations.
 
 from __future__ import annotations
 
-from typing import List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
+from pydantic import BaseModel
 
 from app.api.dependencies import get_app_settings
 from app.config import Settings
@@ -25,6 +26,63 @@ logger = get_logger("user_routes")
 router = APIRouter()
 
 
+class UserDetailsPayload(BaseModel):
+    """Payload structure for user_details in the new format."""
+    contactNo: str
+    doj: str
+    email: str
+    fullName: str
+    level: str
+    location: str
+    team: str
+
+
+class OnboardUserPayload(BaseModel):
+    """New payload structure with msalData and user_details."""
+    msalData: Optional[Dict[str, Any]] = None
+    user_details: UserDetailsPayload
+
+
+def parse_onboard_payload(payload: OnboardUserPayload) -> OnboardUserRequest:
+    """
+    Parse the new payload structure and map to existing OnboardUserRequest.
+    
+    Maps:
+    - user_details.fullName -> name
+    - user_details.email -> emailid
+    - user_details.contactNo -> contact_no
+    - user_details.location -> location
+    - user_details.doj -> date_of_joining
+    - user_details.level -> level
+    - user_details.team -> team
+    - manager -> extracted from msalData or set to empty string
+    """
+    user_details = payload.user_details
+    
+    # Extract manager from msalData if available, otherwise use empty string
+    manager = ""
+    if payload.msalData:
+        # Try common fields where manager might be stored
+        manager = (
+            payload.msalData.get("manager") or
+            payload.msalData.get("managerName") or
+            payload.msalData.get("managerEmail") or
+            payload.msalData.get("reportsTo") or
+            ""
+        )
+    
+    return OnboardUserRequest(
+        name=user_details.fullName,
+        emailid=user_details.email,
+        contact_no=user_details.contactNo,
+        location=user_details.location,
+        date_of_joining=user_details.doj,
+        level=user_details.level,
+        team=user_details.team,
+        manager=manager,
+    )
+
+
 def get_user_db(settings: Settings = Depends(get_app_settings)) -> UserDB:
     """Create and return UserDB instance."""
     return UserDB(db_path=settings.user_db_path)
@@ -37,29 +95,44 @@ def get_user_service(db: UserDB = Depends(get_user_db)) -> UserService:
 
 @router.post("/onboard_user", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def onboard_user(
-    request: OnboardUserRequest,
+    payload: OnboardUserPayload = Body(...),
     user_service: UserService = Depends(get_user_service),
 ) -> UserResponse:
     """
     Onboard a new user.
 
+    Accepts payload in the format:
+    {
+        "msalData": {...},
+        "user_details": {
+            "contactNo": "12e1",
+            "doj": "2025-11-15",
+            "email": "vikas@draup.com",
+            "fullName": "vikas",
+            "level": "SDE 1",
+            "location": "Bengalore, Karnataka, India",
+            "team": "Frontend"
+        }
+    }
+
     Fetches POC config entries for the user's team, builds access_items_status
     with default 'pending' status, and creates a new user record with status='new'.
-
-    Request body:
-    - name: User's name
-    - emailid: User's email address
-    - contact_no: Contact number
-    - location: Location
-    - date_of_joining: Date of joining (ISO date string)
-    - level: User level
-    - team: Team name
-    - manager: Manager name
 
     Returns:
         UserResponse with all user data including generated ID and access_items_status.
     """
     try:
+        # Parse the new payload structure to existing format
+        request = parse_onboard_payload(payload)
+        
+        logger.info(
+            "onboard_user_received",
+            email=request.emailid,
+            name=request.name,
+            team=request.team,
+            has_msal_data=payload.msalData is not None,
+        )
+        
         user_data = user_service.onboard_user(
             name=request.name,
             emailid=request.emailid,
