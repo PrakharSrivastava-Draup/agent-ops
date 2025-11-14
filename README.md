@@ -21,6 +21,20 @@ A prototype-ready FastAPI service that implements a minimal agentic system: one 
 - pydantic for schemas
 - structlog for structured logging
 
+## Deployment
+
+### Railway Deployment
+
+This project is configured for easy deployment on Railway. See [RAILWAY_DEPLOYMENT.md](./RAILWAY_DEPLOYMENT.md) for detailed deployment instructions.
+
+**Quick Start:**
+1. Push your code to GitHub
+2. Create a new Railway project and connect your GitHub repo
+3. Add environment variables in Railway dashboard
+4. Deploy!
+
+### Local Development
+
 ## Environment Variables
 
 Create a `.env` file in the project root with the following variables:

@@ -1,0 +1,26 @@
+# Railway ignore file
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.env
+.env.local
+*.log
+logs/
+traces/
+data/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+test_*.sh
+jenkis.py
+
