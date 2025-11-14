@@ -7,10 +7,10 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.dependencies import get_app_settings
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.models.schemas import (
     AccessItemStatus,
     OnboardUserRequest,
@@ -31,8 +31,9 @@ class UserDetailsPayload(BaseModel):
     """Payload structure for user_details in the new format."""
     contactNo: str
     doj: str
-    email: str
-    fullName: str
+    email: Optional[str] = Field(default="", description="Optional email address")
+    fullName: Optional[str] = Field(default=None, description="Full name of the user")
+    name: Optional[str] = Field(default=None, description="Name of the user (alias for fullName)")
     level: str
     location: str
     team: str
@@ -72,9 +73,17 @@ def parse_onboard_payload(payload: OnboardUserPayload) -> OnboardUserRequest:
             ""
         )
     
+    # Get name from either fullName or name field (prefer fullName if both provided)
+    name = user_details.fullName or user_details.name or ""
+    if not name:
+        raise ValueError("Either 'fullName' or 'name' must be provided in user_details")
+    
+    # Get email (optional, defaults to empty string)
+    email = user_details.email or ""
+    
     return OnboardUserRequest(
-        name=user_details.fullName,
-        emailid=user_details.email,
+        name=name,
+        emailid=email,
         contact_no=user_details.contactNo,
         location=user_details.location,
         date_of_joining=user_details.doj,
@@ -134,9 +143,52 @@ async def onboard_user(
             has_msal_data=payload.msalData is not None,
         )
         
+        # Check if user already exists in DB with emailid
+        existing_user = None
+        if request.emailid:
+            existing_user = user_service.db.get_user_by_emailid(request.emailid)
+        
+        # If user exists and has emailid, use it
+        if existing_user and existing_user.get("emailid"):
+            logger.info(
+                "user_exists_with_email",
+                emailid=existing_user.get("emailid"),
+                user_id=existing_user.get("id"),
+            )
+            # Convert to UserResponse format
+            access_items = [
+                AccessItemStatus(**item) for item in existing_user.get("access_items_status", [])
+            ]
+            return UserResponse(
+                id=existing_user["id"],
+                name=existing_user["name"],
+                emailid=existing_user["emailid"],
+                contact_no=existing_user["contact_no"],
+                location=existing_user["location"],
+                date_of_joining=existing_user["date_of_joining"],
+                level=existing_user["level"],
+                team=existing_user["team"],
+                manager=existing_user["manager"],
+                status=existing_user["status"],
+                access_items_status=access_items,
+            )
+        
+        # User doesn't exist or doesn't have emailid - generate company email
+        # Extract firstname and lastname from fullName
+        name_parts = request.name.strip().split()
+        if len(name_parts) < 2:
+            # If only one name part, use it as both first and last name
+            firstname = name_parts[0] if name_parts else "User"
+            lastname = name_parts[0] if name_parts else "User"
+        else:
+            # First part is firstname, rest is lastname
+            firstname = name_parts[0]
+            lastname = " ".join(name_parts[1:])
+        
+        # Create user first (with empty email if not provided)
         user_data = user_service.onboard_user(
             name=request.name,
-            emailid=request.emailid,
+            emailid=request.emailid or "",  # Empty string if no email provided
             contact_no=request.contact_no,
             location=request.location,
             date_of_joining=request.date_of_joining,
@@ -144,6 +196,32 @@ async def onboard_user(
             team=request.team,
             manager=request.manager,
         )
+        
+        # Generate company email and update user record
+        try:
+            settings = get_settings()
+            generated_email = user_service.generate_and_update_email(
+                user_id=user_data["id"],
+                firstname=firstname,
+                lastname=lastname,
+                full_name=request.name,
+                settings=settings,
+            )
+            # Update user_data with generated email
+            user_data["emailid"] = generated_email
+            logger.info(
+                "company_email_generated",
+                user_id=user_data["id"],
+                generated_email=generated_email,
+            )
+        except UserServiceError as e:
+            # Log error but don't fail the onboarding - user is created, just email generation failed
+            logger.warning(
+                "email_generation_failed_but_user_created",
+                user_id=user_data["id"],
+                error=str(e),
+            )
+            # Continue with empty email if generation failed
 
         # Convert access_items_status to AccessItemStatus objects
         access_items = [

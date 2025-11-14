@@ -3,7 +3,7 @@ from typing import Dict
 
 from fastapi import Depends, HTTPException, status
 
-from app.agents import AWSAgent, BaseAgent, GithubAgent, JenkinsAgent, JiraAgent
+from app.agents import AWSAgent, BaseAgent, EntraAgent, GithubAgent, JenkinsAgent, JiraAgent
 from app.config import Settings, get_settings
 from app.services.jenkins_service import JenkinsService
 from app.services.llm_client import LLMClient
@@ -55,6 +55,9 @@ def _cached_agents(
     jira_base_url: str | None,
     jira_username: str | None,
     jira_api_token: str | None,
+    entra_tenant_id: str | None,
+    entra_client_id: str | None,
+    entra_client_secret: str | None,
 ) -> Dict[str, BaseAgent]:
     agents: Dict[str, BaseAgent] = {
         "GithubAgent": GithubAgent(github_token),
@@ -80,6 +83,18 @@ def _cached_agents(
         aws_session_token=aws_session_token,
     )
     
+    # Initialize EntraAgent if configured
+    if entra_tenant_id and entra_client_id and entra_client_secret:
+        try:
+            agents["EntraAgent"] = EntraAgent(
+                tenant_id=entra_tenant_id,
+                client_id=entra_client_id,
+                client_secret=entra_client_secret,
+            )
+        except Exception:
+            # EntraAgent initialization failed, skip if not available
+            pass
+    
     return agents
 
 
@@ -96,6 +111,9 @@ def get_agents(settings: Settings = Depends(get_app_settings)) -> Dict[str, Base
             settings.jira_base_url,
             settings.jira_username,
             settings.jira_api_token,
+            settings.entra_tenant_id,
+            settings.entra_client_id,
+            settings.entra_client_secret,
         )
     except Exception as exc:
         logger.error("agent_initialization_failed", error=str(exc), error_type=type(exc).__name__)

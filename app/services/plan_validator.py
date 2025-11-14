@@ -39,6 +39,13 @@ ALLOWED_ACTIONS: Dict[str, Dict[str, Dict[str, tuple[type, bool]]]] = {
             "env_name": (str, False),
         },
     },
+    "EntraAgent": {
+        "generate_company_email": {
+            "firstname": (str, True),
+            "lastname": (str, True),
+            "full_name": (str, False),
+        },
+    },
 }
 
 

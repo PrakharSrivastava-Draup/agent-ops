@@ -4,6 +4,8 @@ User management service for handling user onboarding and POC configurations.
 
 from typing import Any, Dict, List, Optional
 
+from app.config import Settings, get_settings
+from app.services.entra_service import EntraService, EntraServiceError
 from app.services.user_db import UserDB, UserDBError
 from app.utils.logging import get_logger
 
@@ -201,4 +203,97 @@ class UserService:
         except UserDBError as exc:
             logger.error("update_user_status_failed", emailid=emailid, error=str(exc))
             raise UserServiceError(f"Failed to update user status: {exc}") from exc
+
+    def generate_and_update_email(
+        self,
+        user_id: int,
+        firstname: str,
+        lastname: str,
+        full_name: Optional[str] = None,
+        settings: Optional[Settings] = None,
+    ) -> str:
+        """
+        Generate a company email address using Entra service and update user record in DB.
+
+        Args:
+            user_id: ID of the user to update
+            firstname: User's first name
+            lastname: User's last name
+            full_name: Optional full name (space-separated) for display name
+            settings: Optional Settings instance. If not provided, will fetch from get_settings().
+
+        Returns:
+            Generated email address
+
+        Raises:
+            UserServiceError: If Entra service fails or database update fails
+        """
+        if settings is None:
+            settings = get_settings()
+
+        # Validate Entra credentials are configured
+        if not settings.entra_tenant_id or not settings.entra_client_id or not settings.entra_client_secret:
+            raise UserServiceError(
+                "Entra ID credentials not configured. Please set TENANT_ID, CLIENT_ID, and CLIENT_SECRET environment variables."
+            )
+
+        try:
+            # Get current user to find their current emailid
+            users = self.db.get_all_users()
+            user = None
+            for u in users:
+                if u.get("id") == user_id:
+                    user = u
+                    break
+
+            if not user:
+                raise UserServiceError(f"User with ID {user_id} not found")
+
+            # Create Entra service and generate email
+            entra_service = EntraService(
+                tenant_id=settings.entra_tenant_id,
+                client_id=settings.entra_client_id,
+                client_secret=settings.entra_client_secret,
+            )
+
+            generated_email = entra_service.generate_company_email(
+                firstname=firstname,
+                lastname=lastname,
+                full_name=full_name,
+            )
+
+            # Update user email in database (by user ID to handle empty emails)
+            self.db.update_user_emailid(user_id=user_id, new_emailid=generated_email)
+
+            logger.info(
+                "email_generated_and_updated",
+                user_id=user_id,
+                new_emailid=generated_email,
+            )
+
+            return generated_email
+
+        except EntraServiceError as exc:
+            logger.error("entra_email_generation_failed", user_id=user_id, error=str(exc))
+            raise UserServiceError(f"Failed to generate company email: {exc}") from exc
+        except UserDBError as exc:
+            logger.error("email_update_failed", user_id=user_id, error=str(exc))
+            raise UserServiceError(f"Failed to update user email in database: {exc}") from exc
+
+    def delete_user(self, user_id: int) -> None:
+        """
+        Delete a user by ID.
+
+        Args:
+            user_id: ID of the user to delete
+
+        Raises:
+            UserServiceError: If database operation fails
+        """
+        try:
+            self.db.delete_user_by_id(user_id)
+            logger.info("user_deleted", user_id=user_id)
+        except UserDBError as exc:
+            logger.error("delete_user_failed", user_id=user_id, error=str(exc))
+            raise UserServiceError(f"Failed to delete user: {exc}") from exc
 

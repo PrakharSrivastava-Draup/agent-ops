@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, validator
 
 
-AgentName = Literal["GithubAgent", "AWSAgent", "JiraAgent", "JenkinsAgent"]
+AgentName = Literal["GithubAgent", "AWSAgent", "JiraAgent", "JenkinsAgent", "EntraAgent"]
 
 
 class TaskRequest(BaseModel):
