@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
+from pydantic import BaseModel
 
 from app.api.dependencies import get_app_settings
 from app.config import Settings
@@ -16,6 +17,12 @@ from app.utils.logging import get_logger
 logger = get_logger("jenkins_routes")
 
 router = APIRouter()
+
+
+class JenkinsTriggerRequest(BaseModel):
+    """Request model for Jenkins trigger endpoint."""
+    
+    parameters: Optional[Dict[str, Any]] = None
 
 
 def get_jenkins_service(settings: Settings = Depends(get_app_settings)) -> JenkinsService:
@@ -32,7 +39,7 @@ def get_jenkins_service(settings: Settings = Depends(get_app_settings)) -> Jenki
 @router.post("/trigger", status_code=status.HTTP_200_OK)
 async def trigger_jenkins_job(
     jenkins_url: str,
-    parameters: Optional[Dict[str, Any]] = None,
+    request: Optional[JenkinsTriggerRequest] = Body(None),
     jenkins_service: JenkinsService = Depends(get_jenkins_service),
 ) -> Dict[str, Any]:
     """
@@ -40,7 +47,7 @@ async def trigger_jenkins_job(
 
     Args:
         jenkins_url: Full URL to the Jenkins job (e.g., https://jenkins.example.com/job/MyJob/)
-        parameters: Optional dictionary of build parameters
+        request: Optional request body with parameters dict
 
     Returns:
         dict: Response with success status, message, and optional queue_url
@@ -59,7 +66,17 @@ async def trigger_jenkins_job(
         }
     """
     try:
+        # Extract parameters from request body
+        parameters = request.parameters if request else None
         build_with_params = parameters is not None and len(parameters) > 0
+        
+        logger.info(
+            "trigger_jenkins_job_received",
+            jenkins_url=jenkins_url,
+            has_parameters=bool(parameters),
+            parameter_keys=list(parameters.keys()) if parameters else [],
+        )
+        
         result = jenkins_service.trigger_jenkins_job(
             jenkins_url=jenkins_url,
             build_with_params=build_with_params,

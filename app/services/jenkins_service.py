@@ -12,7 +12,7 @@ import boto3
 import requests
 from botocore.exceptions import BotoCoreError, ClientError
 from requests.auth import HTTPBasicAuth
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 
 from app.utils.logging import get_logger
 
@@ -194,24 +194,6 @@ class JenkinsService:
         # Construct the full URL
         job_url = urljoin(jenkins_url.rstrip("/") + "/", endpoint)
 
-        # Extract base URL for CSRF token (e.g., https://13.59.177.177/jenkins)
-        parsed = urlparse(jenkins_url)
-        # Extract base path (everything before /job/)
-        path_parts = parsed.path.split('/job/')
-        base_path = path_parts[0] if path_parts else '/jenkins'
-        jenkins_base_url = f"{parsed.scheme}://{parsed.netloc}{base_path}"
-
-        # Get CSRF crumb token
-        self.logger.info("fetching_csrf_token", base_url=jenkins_base_url, jenkins_url=jenkins_url)
-        crumb = self.get_jenkins_crumb(jenkins_base_url, username, password)
-        self.logger.info("csrf_fetch_complete", crumb_obtained=bool(crumb), base_url=jenkins_base_url)
-        headers = {}
-        if crumb:
-            headers["Jenkins-Crumb"] = crumb
-            self.logger.info("csrf_crumb_fetched", has_crumb=True, crumb_length=len(crumb), crumb_preview=crumb[:20] + "..." if len(crumb) > 20 else crumb)
-        else:
-            self.logger.warning("csrf_crumb_not_fetched", base_url=jenkins_base_url, username=username[:3] + "***" if username else None)
-
         self.logger.info(
             "triggering_jenkins_job",
             jenkins_url=jenkins_url,
@@ -220,40 +202,26 @@ class JenkinsService:
             has_parameters=bool(parameters),
             parameter_keys=list(parameters.keys()) if parameters else [],
             username=username,
-            has_csrf_token=bool(crumb),
-            csrf_in_headers=bool(headers.get("Jenkins-Crumb")),
         )
 
         # Set up authentication
         auth = HTTPBasicAuth(username, password)
 
-        # Prepare request
+        # Prepare request - matching jenkis.py logic exactly
         try:
             if build_with_params and parameters:
-                # POST with parameters - Jenkins buildWithParameters expects query string params
-                # Convert list parameters to multiple query params (e.g., Option=AWS&Option=GitHub)
-                # requests library handles this automatically, but we ensure lists are properly formatted
-                formatted_params = {}
-                for key, value in parameters.items():
-                    if isinstance(value, list):
-                        # For lists, requests will create multiple params with same key
-                        formatted_params[key] = value
-                    else:
-                        formatted_params[key] = value
-                
+                # POST with parameters - using params= like original jenkis.py script
+                # This sends parameters as query string (Jenkins accepts this)
                 self.logger.info(
                     "jenkins_request_details",
                     url=job_url,
-                    params=formatted_params,
+                    params=parameters,
                     has_auth=True,
-                    has_csrf_header=bool(headers.get("Jenkins-Crumb")),
-                    csrf_header_value=headers.get("Jenkins-Crumb", "")[:20] + "..." if headers.get("Jenkins-Crumb") else None,
                 )
                 response = requests.post(
                     job_url,
                     auth=auth,
-                    params=formatted_params,  # Query string parameters (as in original script)
-                    headers=headers,
+                    params=parameters,  # Query string parameters (matching jenkis.py)
                     timeout=30,
                     verify=False,  # Note: SSL verification disabled
                 )
@@ -268,7 +236,6 @@ class JenkinsService:
                 response = requests.post(
                     job_url,
                     auth=auth,
-                    headers=headers,
                     timeout=30,
                     verify=False,  # Note: SSL verification disabled
                 )
@@ -306,7 +273,6 @@ class JenkinsService:
                     response_headers=dict(response.headers),
                     response_text_preview=response.text[:500],
                     request_url=job_url,
-                    has_csrf_header=bool(headers.get("Jenkins-Crumb")),
                 )
                 error_msg = f"Failed to trigger Jenkins job. Status: {response.status_code}, Response: {response.text[:500]}"
                 raise JenkinsServiceError(error_msg)
