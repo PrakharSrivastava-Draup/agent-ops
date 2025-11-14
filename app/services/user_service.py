@@ -2,7 +2,7 @@
 User management service for handling user onboarding and POC configurations.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.services.user_db import UserDB, UserDBError
 from app.utils.logging import get_logger
@@ -160,4 +160,45 @@ class UserService:
         except UserDBError as exc:
             logger.error("add_poc_config_failed", error=str(exc))
             raise UserServiceError(f"Failed to add POC config: {exc}") from exc
+
+    def update_user_status(
+        self,
+        emailid: str,
+        status: Optional[str],
+        access_items_status: List[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        """
+        Update user status and access items.
+
+        Args:
+            emailid: User email to identify the user
+            status: Optional overall user status to update
+            access_items_status: List of dicts with 'item' and 'status' keys
+
+        Returns:
+            Updated user data dictionary
+
+        Raises:
+            UserServiceError: If validation fails or database operation fails
+        """
+        # Validate access item statuses
+        valid_statuses = {"pending", "in progress", "completed"}
+        for item_update in access_items_status:
+            item_status = item_update.get("status")
+            if item_status not in valid_statuses:
+                raise UserServiceError(
+                    f"Invalid access item status '{item_status}'. Must be one of: {', '.join(valid_statuses)}"
+                )
+
+        try:
+            user_data = self.db.update_user_status_and_access_items(
+                emailid=emailid,
+                status=status,
+                access_items_updates=access_items_status,
+            )
+            logger.info("user_status_updated", emailid=emailid, status_updated=status is not None)
+            return user_data
+        except UserDBError as exc:
+            logger.error("update_user_status_failed", emailid=emailid, error=str(exc))
+            raise UserServiceError(f"Failed to update user status: {exc}") from exc
 

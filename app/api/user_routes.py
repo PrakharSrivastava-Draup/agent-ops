@@ -15,6 +15,7 @@ from app.models.schemas import (
     AccessItemStatus,
     OnboardUserRequest,
     POCConfigEntry,
+    UpdateUserStatusRequest,
     UserResponse,
 )
 from app.services.user_db import UserDB
@@ -300,5 +301,88 @@ async def add_poc_config(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while adding POC config.",
+        ) from exc
+
+
+@router.put("/update_status", response_model=UserResponse, status_code=status.HTTP_200_OK)
+async def update_status(
+    request: UpdateUserStatusRequest,
+    user_service: UserService = Depends(get_user_service),
+) -> UserResponse:
+    """
+    Update user status and access items.
+
+    Request body:
+        {
+            "emailid": "user@example.com",
+            "status": "in_progress",  # Optional: overall user status
+            "access_items_status": [
+                {"item": "AWS", "status": "in progress"},
+                {"item": "GitHub", "status": "completed"}
+            ]
+        }
+
+    Valid access item statuses: "pending", "in progress", "completed"
+
+    Returns:
+        UserResponse with updated user data including status and access_items_status.
+
+    Raises:
+        404: If user not found or access item not found in user's access_items_status
+        400: If invalid status value provided
+    """
+    try:
+        logger.info(
+            "update_status_received",
+            emailid=request.emailid,
+            status_provided=request.status is not None,
+            items_count=len(request.access_items_status),
+        )
+
+        user_data = user_service.update_user_status(
+            emailid=request.emailid,
+            status=request.status,
+            access_items_status=request.access_items_status,
+        )
+
+        # Convert access_items_status to AccessItemStatus objects
+        access_items = [
+            AccessItemStatus(**item) for item in user_data["access_items_status"]
+        ]
+
+        return UserResponse(
+            id=user_data["id"],
+            name=user_data["name"],
+            emailid=user_data["emailid"],
+            contact_no=user_data["contact_no"],
+            location=user_data["location"],
+            date_of_joining=user_data["date_of_joining"],
+            level=user_data["level"],
+            team=user_data["team"],
+            manager=user_data["manager"],
+            status=user_data["status"],
+            access_items_status=access_items,
+        )
+    except UserServiceError as exc:
+        error_msg = str(exc)
+        logger.error("update_status_failed", emailid=request.emailid, error=error_msg)
+        
+        # Determine appropriate status code based on error message
+        if "not found" in error_msg.lower():
+            status_code = status.HTTP_404_NOT_FOUND
+        elif "invalid" in error_msg.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        else:
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        
+        raise HTTPException(
+            status_code=status_code,
+            detail=error_msg,
+        ) from exc
+    except Exception as exc:
+        logger.error("unexpected_error", error=str(exc), error_type=type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while updating user status.",
         ) from exc
 
