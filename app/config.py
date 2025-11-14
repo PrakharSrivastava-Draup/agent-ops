@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
     cursor_api_key: Optional[str] = Field(default=None, env="CURSOR_API_KEY")
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
+    log_file: Optional[str] = Field(default="logs/app.log", env="LOG_FILE")
+    log_max_bytes: int = Field(default=10485760, env="LOG_MAX_BYTES")  # 10MB default
+    log_backup_count: int = Field(default=5, env="LOG_BACKUP_COUNT")  # Keep 5 backup files
     # Jenkins configuration
     aws_region: str = Field(default="us-east-2", env="AWS_REGION")
     jenkins_ssm_parameter: str = Field(default="jenkins", env="JENKINS_SSM_PARAMETER")

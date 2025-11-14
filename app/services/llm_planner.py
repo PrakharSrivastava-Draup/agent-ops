@@ -17,7 +17,10 @@ class LLMPlanner:
         "You are a deterministic planning assistant. Given a user task and available agent "
         "capabilities, return a JSON array named `plan` where each element is "
         "`{step_id, agent, action, args}`. Only use provided agent actions. "
-        "Do not call any agent; only output the plan. Do not include any extra prose."
+        "Do not call any agent; only output the plan. Do not include any extra prose.\n\n"
+        "For user onboarding tasks, use JenkinsAgent.trigger_provide_access with user_email "
+        "and services list (AWS, GitHub, Confluence, Database). Extract the user email and "
+        "requested services from the natural language request."
     )
     SYNTHESIS_SYSTEM_PROMPT = (
         "You are a synthesis assistant. Given the original task, the executed plan, and summarized "
@@ -47,6 +50,11 @@ class LLMPlanner:
                 {
                     "name": "JiraAgent",
                     "actions": ["get_issue", "search_issues"],
+                },
+                {
+                    "name": "JenkinsAgent",
+                    "actions": ["trigger_provide_access"],
+                    "description": "Triggers Jenkins ProvideAccess-Pipeline for user onboarding. Requires user_email (string) and services (list of: AWS, GitHub, Confluence, Database).",
                 },
             ],
         }

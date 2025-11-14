@@ -29,6 +29,12 @@ ALLOWED_ACTIONS: Dict[str, Dict[str, Dict[str, tuple[type, bool]]]] = {
         "get_issue": {"issue_key": (str, True)},
         "search_issues": {"jql": (str, True), "limit": (int, False)},
     },
+    "JenkinsAgent": {
+        "trigger_provide_access": {
+            "user_email": (str, True),
+            "services": (list, True),
+        },
+    },
 }
 
 
@@ -57,6 +63,11 @@ class PlanValidator:
                 raise PlanValidationError(f"Action `{step.action}` is not permitted for `{step.agent}`.")
 
             self._validate_args(step.action, step.args, action_requirements)
+            
+            # Custom validation for JenkinsAgent
+            if step.agent == "JenkinsAgent" and step.action == "trigger_provide_access":
+                self._validate_jenkins_services(step.args)
+            
             validated_steps.append(step)
         return validated_steps
 
@@ -86,4 +97,29 @@ class PlanValidator:
         extraneous = set(provided_args.keys()) - allowed_keys
         for key in list(extraneous):
             provided_args.pop(key)
+
+    def _validate_jenkins_services(self, args: dict[str, Any]) -> None:
+        """Validate that services list contains only valid service names."""
+        VALID_SERVICES = {"AWS", "GitHub", "Confluence", "Database"}
+        
+        if "services" not in args:
+            return  # Already validated as required
+        
+        services = args["services"]
+        if not isinstance(services, list):
+            raise PlanValidationError("Argument `services` must be a list.")
+        
+        if not services:
+            raise PlanValidationError("Argument `services` must contain at least one service.")
+        
+        services_set = {str(s).strip() for s in services if s}
+        invalid_services = services_set - VALID_SERVICES
+        if invalid_services:
+            raise PlanValidationError(
+                f"Invalid services in list: {sorted(invalid_services)}. "
+                f"Valid services are: {sorted(VALID_SERVICES)}"
+            )
+        
+        # Normalize services list
+        args["services"] = sorted(list(services_set))
 

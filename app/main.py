@@ -9,7 +9,12 @@ from app.utils.logging import configure_logging
 def create_app() -> FastAPI:
     """Instantiate FastAPI application with configured routers."""
     settings = get_settings()
-    configure_logging(settings.log_level)
+    configure_logging(
+        level=settings.log_level,
+        log_file=settings.log_file,
+        log_max_bytes=settings.log_max_bytes,
+        log_backup_count=settings.log_backup_count,
+    )
     application = FastAPI(
         title=settings.app_name,
         version="0.1.0",

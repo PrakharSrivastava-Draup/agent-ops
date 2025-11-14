@@ -160,22 +160,37 @@ class JenkinsService:
             "triggering_jenkins_job",
             jenkins_url=jenkins_url,
             endpoint=endpoint,
+            job_url=job_url,
             has_parameters=bool(parameters),
+            parameter_keys=list(parameters.keys()) if parameters else [],
+            username=username,
         )
 
-        # Set up authentication
+        # Set up authentication (matching original jenkis.py script - no CSRF tokens)
         auth = HTTPBasicAuth(username, password)
 
         # Prepare request
         try:
             if build_with_params and parameters:
-                # POST with parameters
+                # POST with parameters - Jenkins buildWithParameters expects query string params
+                # Match the original jenkis.py script behavior exactly
+                self.logger.debug(
+                    "jenkins_request_details",
+                    url=job_url,
+                    params=parameters,
+                    has_auth=True,
+                )
                 response = requests.post(
                     job_url,
                     auth=auth,
-                    params=parameters,
+                    params=parameters,  # Query string parameters (as in original script)
                     timeout=30,
                     verify=False,  # Note: SSL verification disabled
+                )
+                self.logger.info(
+                    "jenkins_response_received",
+                    status_code=response.status_code,
+                    response_headers=dict(response.headers),
                 )
             else:
                 # Simple POST to trigger build

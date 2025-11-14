@@ -1,11 +1,11 @@
 # Minimal Agentic System
 
-A prototype-ready FastAPI service that implements a minimal agentic system: one **planning LLM** that orchestrates multiple **access agents** (GitHub, AWS, JIRA). The planning LLM issues actions to the access agents; access agents are simple tool wrappers that call external APIs. The system performs read-only operations and returns structured plans, execution traces, and synthesized results.
+A prototype-ready FastAPI service that implements a minimal agentic system: one **planning LLM** that orchestrates multiple **access agents** (GitHub, AWS, JIRA, Jenkins). The planning LLM issues actions to the access agents; access agents are simple tool wrappers that call external APIs. The system supports read-only operations and user onboarding via Jenkins pipelines.
 
 ## Overview
 
-- **Purpose**: Accept a high-level request (JSON) describing a task related to code/repo/infra/tickets. The planning LLM (single LLM) will plan a sequence of tool calls and instruct the access agents (GitHubAgent, AWSAgent, JiraAgent) to perform read-only operations. The API returns a structured plan, the tool call trace, and the final aggregated result produced by the planning LLM after receiving tool outputs.
-- **Operations**: All operations are read-only. The system does not write to external systems (no creating issues, commits, pushes, or modifying infra). If a write is implied, the planning LLM should return a suggested action but not call any write API.
+- **Purpose**: Accept a high-level request (JSON) describing a task related to code/repo/infra/tickets/user onboarding. The planning LLM (single LLM) will plan a sequence of tool calls and instruct the access agents (GitHubAgent, AWSAgent, JiraAgent, JenkinsAgent) to perform operations. The API returns a structured plan, the tool call trace, and the final aggregated result produced by the planning LLM after receiving tool outputs.
+- **Operations**: Most operations are read-only. The JenkinsAgent can trigger Jenkins pipelines for user onboarding (provisioning access to AWS, GitHub, Confluence, Database).
 - **Architecture**: Simple and clear implementation prioritizing readability and modularity.
 
 ## Tech Stack
@@ -177,6 +177,11 @@ List available agents and their capabilities.
     "name": "JiraAgent",
     "description": "Read-only JIRA operations (issues, search)",
     "actions": ["get_issue", "search_issues"]
+  },
+  "JenkinsAgent": {
+    "name": "JenkinsAgent",
+    "description": "User onboarding via Jenkins ProvideAccess-Pipeline (AWS, GitHub, Confluence, Database)",
+    "actions": ["trigger_provide_access"]
   }
 }
 ```
@@ -199,6 +204,14 @@ List available agents and their capabilities.
 
 - `get_issue(issue_key)` - Returns title, description, reporter, status, comments (first N)
 - `search_issues(jql, limit=20)` - List of issues with key and summary
+
+### JenkinsAgent
+
+- `trigger_provide_access(user_email, services, ...)` - Triggers Jenkins ProvideAccess-Pipeline for user onboarding
+  - `user_email`: Email address of the user to onboard (required)
+  - `services`: List of services to provision (required, must be subset of: AWS, GitHub, Confluence, Database)
+  - `cc_email`: Optional CC email for notifications
+  - Returns pipeline status and queue URL
 
 ## Example Requests
 
@@ -251,6 +264,72 @@ curl -X POST "http://localhost:8000/api/execute_task" \
     "task": "List all S3 buckets in my AWS account",
     "context": {}
   }'
+```
+
+### Example 5: User Onboarding (Natural Language)
+
+```bash
+curl -X POST "http://localhost:8000/api/execute_task" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task": "Onboard john.doe@example.com with AWS and GitHub access",
+    "context": {}
+  }'
+```
+
+### Example 6: User Onboarding (Structured Endpoint)
+
+```bash
+curl -X POST "http://localhost:8000/api/onboard_user" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_email": "john.doe@example.com",
+    "services": ["AWS", "GitHub"],
+    "cc_email": "manager@example.com"
+  }'
+```
+
+**Response** (200 OK):
+```json
+{
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "task": "Onboard john.doe@example.com with access to AWS, GitHub",
+  "plan": [
+    {
+      "step_id": 0,
+      "agent": "JenkinsAgent",
+      "action": "trigger_provide_access",
+      "args": {
+        "user_email": "john.doe@example.com",
+        "services": ["AWS", "GitHub"]
+      }
+    }
+  ],
+  "trace": [
+    {
+      "step_id": 0,
+      "agent": "JenkinsAgent",
+      "action": "trigger_provide_access",
+      "request": {
+        "user_email": "john.doe@example.com",
+        "services": ["AWS", "GitHub"]
+      },
+      "response_summary": "{\"success\": true, \"queue_url\": \"https://jenkins.example.com/queue/item/12345/\", ...}",
+      "duration_ms": 1200,
+      "truncated": false,
+      "warnings": []
+    }
+  ],
+  "final_result": {
+    "type": "structured",
+    "content": {
+      "summary": "User onboarding initiated successfully. Jenkins pipeline triggered for john.doe@example.com with AWS and GitHub access.",
+      "recommended_next_steps": ["Monitor Jenkins pipeline status", "Verify access provisioning"],
+      "warnings": []
+    }
+  },
+  "warnings": []
+}
 ```
 
 ## Logging & Tracing
