@@ -69,15 +69,16 @@ def _cached_agents(
             # JiraAgent requires all config, skip if not available
             pass
     
-    # Initialize JenkinsAgent
-    jenkins_service = JenkinsService(
+    # Initialize JenkinsAgent - pass config instead of service instance
+    # This allows the agent to create a fresh service instance each time,
+    # using the same pattern as get_jenkins_service() in jenkins_routes.py
+    agents["JenkinsAgent"] = JenkinsAgent(
         aws_region=aws_region,
         ssm_parameter_name=jenkins_ssm_parameter,
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
         aws_session_token=aws_session_token,
     )
-    agents["JenkinsAgent"] = JenkinsAgent(jenkins_service=jenkins_service)
     
     return agents
 

@@ -13,7 +13,7 @@ logger = get_logger("JenkinsAgent")
 VALID_SERVICES = {"AWS", "GitHub", "Confluence", "Database"}
 
 # Default Jenkins URL for ProvideAccess-Pipeline
-DEFAULT_JENKINS_URL = "https://13.59.177.177/jenkins/job/Devops/job/User/job/ProvideAccess-Pipeline/"
+DEFAULT_JENKINS_URL = "https://13.59.177.177/jenkins/job/Devops/job/User/job/ProvideAccessPipeline_hackathon/"
 
 
 class JenkinsAgent(BaseAgent):
@@ -21,18 +21,44 @@ class JenkinsAgent(BaseAgent):
 
     def __init__(
         self,
-        jenkins_service: JenkinsService,
+        jenkins_service: JenkinsService | None = None,
         jenkins_url: str = DEFAULT_JENKINS_URL,
+        aws_region: str = "us-east-2",
+        ssm_parameter_name: str = "jenkins",
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
     ) -> None:
         """
         Initialize Jenkins agent.
 
         Args:
-            jenkins_service: JenkinsService instance for triggering jobs
+            jenkins_service: Optional JenkinsService instance (for backward compatibility)
             jenkins_url: URL to the ProvideAccess-Pipeline job
+            aws_region: AWS region for SSM parameter store
+            ssm_parameter_name: SSM parameter name for Jenkins credentials
+            aws_access_key_id: AWS access key ID
+            aws_secret_access_key: AWS secret access key
+            aws_session_token: Optional AWS session token
         """
         super().__init__("JenkinsAgent")
-        self.jenkins_service = jenkins_service
+        # Store config for creating fresh service instances on each call
+        # This ensures we always use the latest code, same as direct API route
+        if jenkins_service is not None:
+            # Backward compatibility: extract config from existing service if possible
+            # Otherwise, we'll use defaults (not ideal but maintains compatibility)
+            self._aws_region = getattr(jenkins_service, 'aws_region', aws_region)
+            self._ssm_parameter_name = getattr(jenkins_service, 'ssm_parameter_name', ssm_parameter_name)
+            self._aws_access_key_id = getattr(jenkins_service, 'aws_access_key_id', aws_access_key_id)
+            self._aws_secret_access_key = getattr(jenkins_service, 'aws_secret_access_key', aws_secret_access_key)
+            self._aws_session_token = getattr(jenkins_service, 'aws_session_token', aws_session_token)
+        else:
+            # Store config for creating fresh service instances
+            self._aws_region = aws_region
+            self._ssm_parameter_name = ssm_parameter_name
+            self._aws_access_key_id = aws_access_key_id
+            self._aws_secret_access_key = aws_secret_access_key
+            self._aws_session_token = aws_session_token
         self.jenkins_url = jenkins_url
         self._log_info("Initialized Jenkins agent", jenkins_url=jenkins_url)
 
@@ -109,9 +135,25 @@ class JenkinsAgent(BaseAgent):
         )
 
         # Trigger Jenkins job (run in thread pool since JenkinsService is sync)
+        # Create a fresh service instance on each call, same as direct API route
+        # This ensures we always use the latest code, including CSRF token handling
         try:
+            # Create fresh service instance (same pattern as get_jenkins_service() in jenkins_routes.py)
+            self._log_info(
+                "creating_fresh_jenkins_service",
+                has_aws_region=hasattr(self, '_aws_region'),
+                has_ssm_param=hasattr(self, '_ssm_parameter_name'),
+            )
+            jenkins_service = JenkinsService(
+                aws_region=getattr(self, '_aws_region', 'us-east-2'),
+                ssm_parameter_name=getattr(self, '_ssm_parameter_name', 'jenkins'),
+                aws_access_key_id=getattr(self, '_aws_access_key_id', None),
+                aws_secret_access_key=getattr(self, '_aws_secret_access_key', None),
+                aws_session_token=getattr(self, '_aws_session_token', None),
+            )
+            self._log_info("fresh_jenkins_service_created")
             result = await asyncio.to_thread(
-                self.jenkins_service.trigger_jenkins_job,
+                jenkins_service.trigger_jenkins_job,
                 jenkins_url=self.jenkins_url,
                 build_with_params=True,
                 parameters=parameters,

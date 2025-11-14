@@ -70,3 +70,52 @@ class AgentDescriptor(BaseModel):
     actions: List[str]
 
 
+# User Management Schemas
+
+
+class AccessItemStatus(BaseModel):
+    """Access item status entry."""
+
+    item: str
+    status: str  # pending, in_progress, completed
+    timestamp: Optional[int] = None  # Unix timestamp in milliseconds
+
+
+class OnboardUserRequest(BaseModel):
+    """Request model for user onboarding."""
+
+    name: str
+    emailid: str
+    contact_no: str
+    location: str
+    date_of_joining: str
+    level: str
+    team: str
+    manager: str
+
+
+class UserResponse(BaseModel):
+    """User response model."""
+
+    id: int
+    name: str
+    emailid: str
+    contact_no: str
+    location: str
+    date_of_joining: str
+    level: str
+    team: str
+    manager: str
+    status: str
+    access_items_status: List[AccessItemStatus]
+
+
+class POCConfigEntry(BaseModel):
+    """Single POC config entry."""
+
+    role: str
+    team: str
+    access_items: List[str]
+    poc_id: str
+
+
