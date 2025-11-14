@@ -33,6 +33,10 @@ ALLOWED_ACTIONS: Dict[str, Dict[str, Dict[str, tuple[type, bool]]]] = {
         "trigger_provide_access": {
             "user_email": (str, True),
             "services": (list, True),
+            "cc_email": (str, False),
+            "aws_iam_user_group": (str, False),
+            "github_team": (str, False),
+            "env_name": (str, False),
         },
     },
 }

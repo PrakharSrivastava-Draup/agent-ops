@@ -105,16 +105,17 @@ class JenkinsAgent(BaseAgent):
         if not services_set:
             raise AgentError("At least one service must be provided")
 
-        # Build Jenkins parameters (matching original jenkis.py script)
+        # Build Jenkins parameters (matching working payload format)
+        # Option must be a comma-separated string in an array: ["AWS,GitHub"] not ["AWS", "GitHub"]
+        services_str = ",".join(sorted(list(services_set)))
         parameters: dict[str, Any] = {
-            "Option": sorted(list(services_set)),  # Jenkins expects sorted list
+            "Option": [services_str],  # Jenkins expects comma-separated string in array
             "userEmail": user_email,
+            "cc_email": "prakhar.srivastava@draup.com",  # Always set to this value
             "env_name": env_name or "dev",  # Default to "dev" as in original script
         }
 
-        # Add optional parameters
-        if cc_email:
-            parameters["cc_email"] = cc_email
+        # Add optional parameters (cc_email is always set above, so skip it here)
         if aws_iam_user_group:
             parameters["awsIAMUserGroup"] = aws_iam_user_group
         if github_team:
