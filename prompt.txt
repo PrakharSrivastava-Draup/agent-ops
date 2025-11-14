@@ -1,0 +1,86 @@
+You are a senior backend engineer. Generate a complete this project that implements a minimal agentic system: one **planning LLM** that orchestrates multiple **access agents** (GitHub, AWS, JIRA). The planning LLM issues actions to the access agents; access agents are simple tool wrappers that call external APIs. The system must be prototype-ready, minimal, and run locally without Docker. Use FastAPI for the HTTP API. Do not include tests. Follow these exact requirements.
+
+OVERVIEW
+- Purpose: Accept a high-level request (JSON) describing a task related to code/repo/infra/tickets. The planning LLM (single LLM) will plan a sequence of tool calls and instruct the access agents (GitHubAgent, AWSAgent, JiraAgent) to perform read-only operations. The API returns a structured plan, the tool call trace, and the final aggregated result produced by the planning LLM after receiving tool outputs.
+- All operations must be read-only. Do not implement any code that writes to external systems (no creating issues, commits, pushes, or modifying infra). If a write is implied, the planning LLM should return a suggested action but not call any write API.
+- Keep the implementation simple and clear; prioritize readability and modularity.
+
+TECH STACK & DEPENDENCIES
+- Python 3.10+
+- FastAPI + Uvicorn
+- httpx for HTTP requests
+- python-dotenv for env loading
+- direct GitHub REST via httpx
+- boto3 for AWS read-only operations (e.g., list S3 buckets, describe instances)
+- jira (jira-python) or direct REST calls for JIRA read operations
+- OpenAI Python SDK (or abstract LLM client supporting alternative providers via env)
+- pydantic for schemas
+- logging (structured JSON lines recommended)
+
+ENVIRONMENT VARIABLES (required)
+- GITHUB_TOKEN — read-only token for GitHub API
+- AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY — read-only AWS creds or rely on local AWS config
+- JIRA_BASE_URL, JIRA_USERNAME, JIRA_API_TOKEN — read-only credentials for JIRA
+- cursor api key
+- APP_SECRET_KEY — random string for app use
+
+PROJECT BEHAVIOR & API
+1) HTTP API
+   - POST /api/execute_task
+     - Request body: `{ "task": "<natural language task>", "context": { optional context hints } }`
+     - Response JSON schema:
+       ```
+       {
+         "request_id": "<uuid>",
+         "task": "<original task>",
+         "plan": [ {"step_id": int, "action": "describe", "target_agent": "GithubAgent|AWSAgent|JiraAgent", "args": {...}} ],
+         "trace": [ {"step_id": int, "agent": "GithubAgent", "action": "...", "request": {...}, "response_summary": "...", "duration_ms": int} ],
+         "final_result": { "type": "text|structured", "content": {...} },
+         "warnings": [strings]
+       }
+       ```
+   - GET /api/agents — returns available agents and basic capabilities.
+
+2) Request handling flow
+   - Receive task request → create `request_id` (UUID) and timestamp.
+   - Call Planning LLM with a deterministic system prompt to produce a *plan* (a list of ordered steps where each step names an agent and provides args).
+   - Validate the plan: ensure only allowed read-only actions are requested. Sanitize inputs (no URLs pointing to internal-only hosts to prevent SSRF).
+   - Execute plan steps sequentially: for each step, call the corresponding access agent method, capture request/response and duration, append to trace.
+   - After all agent steps complete, call the Planning LLM a second time with the original task, the produced plan, and the trace summaries so it can synthesize a final result (summary, suggested next steps, or decision). Return full JSON.
+
+ACCESS AGENTS (tool wrappers)
+- Implement three agents as small classes with explicit read-only methods. Each method returns a succinct parsed result (not raw HTTP blobs).
+  - `GithubAgent` (methods):
+    - `get_pr(owner, repo, number)` -> returns title, author, body, list of changed files (paths), and small unified diff hunks (truncate long hunks and indicate truncation in response)
+    - `list_recent_commits(owner, repo, branch, limit=20)` -> returns commit messages and authors
+    - `get_file(owner, repo, path, ref)` -> returns file content up to a safe max length
+  - `AWSAgent` (methods):
+    - `list_s3_buckets()` -> list bucket names (or limited sample)
+    - `describe_ec2_instances(region)` -> list instance ids and basic metadata
+    - `get_s3_object_head(bucket, key)` -> returns metadata only (no object download)
+  - `JiraAgent` (methods):
+    - `get_issue(issue_key)` -> title, description, reporter, status, comments (first N)
+    - `search_issues(jql, limit=20)` -> list of issues with key and summary
+
+LLM PLANNING AGENT
+- Implement `LLMPlanner` class with a `plan(task, context)` method and a `synthesize(task, plan, trace)` method.
+- Use OpenAI API by default; wrap calls in a client that:
+  - uses `temperature=0.0` for deterministic planning
+  - enforces a token usage safety: split large tool outputs into summarized chunks before sending to LLM for synthesis
+  - logs prompt metadata (length, truncated flags) but not secret contents
+- Provide concrete system and user prompt templates in the code:
+  - SYSTEM: "You are a deterministic planning assistant. Given a user task and available agent capabilities, return a JSON array named `plan` where each element is `{step_id, agent, action, args}`. Only use provided agent actions. Do not call any agent; only output the plan. Do not include any extra prose."
+  - SYNTHESIS SYSTEM: "You are a synthesis assistant. Given the original task, the executed plan, and summarized agent step responses, produce a final JSON `final_result` that answers the task and lists recommended next steps and any uncertainty or warnings."
+
+VALIDATION & SAFETY
+- Validate the planning LLM's plan against a whitelist of allowed agents and actions. If the plan proposes disallowed actions, reject with a clear error and include that in `warnings`.
+- Sanitize any network or file path arguments to prevent SSRF and local file access.
+- Enforce read-only semantics: code must never call GitHub/Git write APIs or JIRA write endpoints; abort and warn if plan includes writes.
+- Rate-limit LLM calls with a simple in-process semaphore limiting concurrency to 1.
+
+LOGGING & TRACEABILITY
+- Structured logs (timestamp, request_id, step_id, agent, action, duration_ms, status).
+- Keep a local `traces/` directory saving minimal JSON traces per request_id for post-hoc review (no raw secrets).
+- Response must include the `trace` array but not raw LLM prompts or full tool outputs (only summaries and truncation indicators).
+
+PROJECT STRUCTURE (simple, clear)
