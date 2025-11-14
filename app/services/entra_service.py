@@ -5,6 +5,8 @@ Entra ID service for creating users and generating company email addresses.
 from __future__ import annotations
 
 import re
+import secrets
+import string
 from typing import Optional
 
 import httpx
@@ -109,6 +111,51 @@ class EntraService:
         # Final fallback
         return "name@company"
 
+    def _generate_secure_password(self, length: int = 16) -> str:
+        """
+        Generate a secure random password that meets Microsoft Entra ID requirements.
+
+        Requirements:
+        - At least 8 characters (we use 16 by default)
+        - Contains uppercase letters, lowercase letters, numbers, and special characters
+        - Uses only safe special characters that are commonly accepted by Microsoft Entra ID
+
+        Args:
+            length: Length of the password (default: 16)
+
+        Returns:
+            Secure random password string
+        """
+        if length < 8:
+            length = 8
+
+        # Character sets - using safe special characters commonly accepted by Entra ID
+        # Avoiding: backslash, forward slash, quotes, brackets, and other potentially problematic chars
+        uppercase = string.ascii_uppercase
+        lowercase = string.ascii_lowercase
+        digits = string.digits
+        # Safe special characters for Microsoft Entra ID (most commonly accepted)
+        # Removed brackets [] as they can sometimes cause issues in some configurations
+        special_chars = "!@#$%^&*()_+-={}|;:,.<>?"
+
+        # Ensure at least one character from each required set
+        password_chars = [
+            secrets.choice(uppercase),
+            secrets.choice(lowercase),
+            secrets.choice(digits),
+            secrets.choice(special_chars),
+        ]
+
+        # Fill the rest with random characters from all sets
+        all_chars = uppercase + lowercase + digits + special_chars
+        for _ in range(length - 4):
+            password_chars.append(secrets.choice(all_chars))
+
+        # Shuffle to avoid predictable pattern (uppercase, lowercase, digit, special, then rest)
+        secrets.SystemRandom().shuffle(password_chars)
+
+        return "".join(password_chars)
+
     def generate_company_email(
         self,
         firstname: str,
@@ -154,13 +201,19 @@ class EntraService:
             self.logger.error("graph_token_failed", error=str(e))
             raise EntraServiceError(f"Failed to get access token: {str(e)}") from e
 
+        # Generate secure temporary password
+        temp_password = self._generate_secure_password()
+
         # Create user in Entra ID via Microsoft Graph API
         user_payload = {
             "accountEnabled": True,
             "displayName": display_name,
             "mailNickname": principal_name,
             "userPrincipalName": email,
-            # No password - user will set it up later
+            "passwordProfile": {
+                "password": temp_password,
+                "forceChangePasswordNextSignIn": True,
+            },
         }
 
         headers = {
