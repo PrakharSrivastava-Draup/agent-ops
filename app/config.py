@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseSettings, Field
@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     jenkins_ssm_parameter: str = Field(default="jenkins", env="JENKINS_SSM_PARAMETER")
     # User management database
     user_db_path: str = Field(default="data/users.db", env="USER_DB_PATH")
+    # CORS configuration (comma-separated list of origins, or "*" for all)
+    cors_origins: List[str] = Field(
+        default=["*"],
+        env="CORS_ORIGINS",
+        description="Comma-separated list of allowed CORS origins. Use '*' for all origins.",
+    )
 
     class Config:
         env_file = ".env"
@@ -43,6 +49,12 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return cached application settings."""
     load_dotenv(dotenv_path=ENV_PATH, override=False)
-    return Settings()
+    settings = Settings()
+    # Parse CORS_ORIGINS from comma-separated string if provided
+    import os
+    cors_origins_env = os.getenv("CORS_ORIGINS")
+    if cors_origins_env:
+        settings.cors_origins = [origin.strip() for origin in cors_origins_env.split(",")]
+    return settings
 
 

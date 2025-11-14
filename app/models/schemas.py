@@ -77,7 +77,7 @@ class AccessItemStatus(BaseModel):
     """Access item status entry."""
 
     item: str
-    status: str  # pending, in_progress, completed
+    status: str  # pending, in progress, completed
     timestamp: Optional[int] = None  # Unix timestamp in milliseconds
 
 
@@ -117,5 +117,16 @@ class POCConfigEntry(BaseModel):
     team: str
     access_items: List[str]
     poc_id: str
+
+
+class UpdateUserStatusRequest(BaseModel):
+    """Request model for updating user status and access items."""
+
+    emailid: str = Field(..., description="User email to identify the user")
+    status: Optional[str] = Field(None, description="Overall user status (optional)")
+    access_items_status: List[Dict[str, str]] = Field(
+        ...,
+        description="List of access items to update with format [{'item': 'item_name', 'status': 'pending|in progress|completed'}]",
+    )
 
 

@@ -4,6 +4,7 @@ SQLite database setup and connection management for user management service.
 
 import json
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -122,6 +123,28 @@ class UserDB:
             logger.error("user_insert_failed", error=str(exc))
             raise UserDBError(f"Failed to insert user: {exc}") from exc
 
+    def get_user_by_emailid(self, emailid: str) -> Optional[Dict[str, Any]]:
+        """Get a user by emailid from the database."""
+        try:
+            with self.get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM user WHERE emailid = ?", (emailid,))
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+                user_dict = dict(row)
+                # Parse JSON access_items_status
+                if user_dict.get("access_items_status"):
+                    user_dict["access_items_status"] = json.loads(user_dict["access_items_status"])
+                else:
+                    user_dict["access_items_status"] = []
+                logger.info("user_fetched_by_email", emailid=emailid)
+                return user_dict
+        except sqlite3.Error as exc:
+            logger.error("user_fetch_by_email_failed", emailid=emailid, error=str(exc))
+            raise UserDBError(f"Failed to fetch user by email: {exc}") from exc
+
     def get_all_users(self) -> List[Dict[str, Any]]:
         """Get all users from the database."""
         try:
@@ -213,4 +236,104 @@ class UserDB:
         except sqlite3.Error as exc:
             logger.error("poc_config_insert_failed", error=str(exc))
             raise UserDBError(f"Failed to insert POC config: {exc}") from exc
+
+    def update_user_status_and_access_items(
+        self,
+        emailid: str,
+        status: Optional[str],
+        access_items_updates: List[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        """
+        Update user status and access items.
+
+        Args:
+            emailid: User email to identify the user
+            status: Optional overall user status to update
+            access_items_updates: List of dicts with 'item' and 'status' keys
+
+        Returns:
+            Updated user data dictionary
+
+        Raises:
+            UserDBError: If user not found or item not found in access_items_status
+        """
+        try:
+            with self.get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                # Get current user data
+                cursor.execute("SELECT * FROM user WHERE emailid = ?", (emailid,))
+                row = cursor.fetchone()
+                if row is None:
+                    raise UserDBError(f"User with emailid {emailid} not found")
+                
+                # Convert row to dict
+                user_dict = dict(row)
+                
+                # Parse current access_items_status
+                if user_dict.get("access_items_status"):
+                    access_items_status = json.loads(user_dict["access_items_status"])
+                else:
+                    access_items_status = []
+                
+                # Update access items
+                current_timestamp = int(time.time() * 1000)  # Unix timestamp in milliseconds
+                for update in access_items_updates:
+                    item_name = update.get("item")
+                    new_status = update.get("status")
+                    
+                    if not item_name or not new_status:
+                        raise UserDBError("Each access item update must have 'item' and 'status' keys")
+                    
+                    # Find the item in existing access_items_status
+                    item_found = False
+                    for item in access_items_status:
+                        if item.get("item") == item_name:
+                            item["status"] = new_status
+                            item["timestamp"] = current_timestamp
+                            item_found = True
+                            break
+                    
+                    if not item_found:
+                        raise UserDBError(f"Access item '{item_name}' not found in user's access_items_status")
+                
+                # Update overall status if provided
+                new_status_value = status if status is not None else user_dict["status"]
+                
+                # Save updated data
+                access_items_json = json.dumps(access_items_status)
+                cursor.execute("""
+                    UPDATE user 
+                    SET status = ?, access_items_status = ?
+                    WHERE emailid = ?
+                """, (new_status_value, access_items_json, emailid))
+                
+                conn.commit()
+                
+                # Return updated user data
+                updated_user = {
+                    "id": user_dict["id"],
+                    "name": user_dict["name"],
+                    "emailid": user_dict["emailid"],
+                    "contact_no": user_dict["contact_no"],
+                    "location": user_dict["location"],
+                    "date_of_joining": user_dict["date_of_joining"],
+                    "level": user_dict["level"],
+                    "team": user_dict["team"],
+                    "manager": user_dict["manager"],
+                    "status": new_status_value,
+                    "access_items_status": access_items_status,
+                }
+                
+                logger.info(
+                    "user_status_updated",
+                    emailid=emailid,
+                    status_updated=status is not None,
+                    items_updated=len(access_items_updates),
+                )
+                return updated_user
+        except sqlite3.Error as exc:
+            logger.error("user_status_update_failed", emailid=emailid, error=str(exc))
+            raise UserDBError(f"Failed to update user status: {exc}") from exc
 
