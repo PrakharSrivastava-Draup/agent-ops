@@ -49,7 +49,7 @@ class UserDB:
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS user (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name TEXT,
+                        name TEXT UNIQUE,
                         emailid TEXT,
                         contact_no TEXT,
                         location TEXT,
@@ -61,6 +61,16 @@ class UserDB:
                         access_items_status TEXT
                     )
                 """)
+                
+                # Add unique constraint on name if table already exists and constraint doesn't exist
+                # This handles the case where the table was created before the unique constraint
+                try:
+                    cursor.execute("""
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_user_name_unique ON user(name)
+                    """)
+                except sqlite3.OperationalError:
+                    # Index might already exist, ignore
+                    pass
 
                 # Create poc_config table
                 cursor.execute("""
@@ -144,6 +154,38 @@ class UserDB:
         except sqlite3.Error as exc:
             logger.error("user_fetch_by_email_failed", emailid=emailid, error=str(exc))
             raise UserDBError(f"Failed to fetch user by email: {exc}") from exc
+
+    def get_users_by_name(self, name: str) -> List[Dict[str, Any]]:
+        """
+        Get all users with a given name (case-insensitive).
+
+        Args:
+            name: User name to search for
+
+        Returns:
+            List of user dictionaries matching the name
+        """
+        try:
+            with self.get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                # Use LOWER for case-insensitive comparison
+                cursor.execute("SELECT * FROM user WHERE LOWER(name) = LOWER(?)", (name,))
+                rows = cursor.fetchall()
+                users = []
+                for row in rows:
+                    user_dict = dict(row)
+                    # Parse JSON access_items_status
+                    if user_dict.get("access_items_status"):
+                        user_dict["access_items_status"] = json.loads(user_dict["access_items_status"])
+                    else:
+                        user_dict["access_items_status"] = []
+                    users.append(user_dict)
+                logger.info("users_fetched_by_name", name=name, count=len(users))
+                return users
+        except sqlite3.Error as exc:
+            logger.error("users_fetch_by_name_failed", name=name, error=str(exc))
+            raise UserDBError(f"Failed to fetch users by name: {exc}") from exc
 
     def get_all_users(self) -> List[Dict[str, Any]]:
         """Get all users from the database."""
@@ -336,4 +378,73 @@ class UserDB:
         except sqlite3.Error as exc:
             logger.error("user_status_update_failed", emailid=emailid, error=str(exc))
             raise UserDBError(f"Failed to update user status: {exc}") from exc
+
+    def update_user_emailid(self, user_id: int, new_emailid: str) -> None:
+        """
+        Update user email address in the database.
+
+        Args:
+            user_id: User ID to identify the user
+            new_emailid: New email address to set
+
+        Raises:
+            UserDBError: If user not found or database operation fails
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Check if user exists
+                cursor.execute("SELECT id FROM user WHERE id = ?", (user_id,))
+                if cursor.fetchone() is None:
+                    raise UserDBError(f"User with id {user_id} not found")
+                
+                # Update email
+                cursor.execute(
+                    "UPDATE user SET emailid = ? WHERE id = ?",
+                    (new_emailid, user_id)
+                )
+                conn.commit()
+                
+                logger.info(
+                    "user_email_updated",
+                    user_id=user_id,
+                    new_emailid=new_emailid,
+                )
+        except sqlite3.Error as exc:
+            logger.error(
+                "user_email_update_failed",
+                user_id=user_id,
+                new_emailid=new_emailid,
+                error=str(exc),
+            )
+            raise UserDBError(f"Failed to update user email: {exc}") from exc
+
+    def delete_user_by_id(self, user_id: int) -> None:
+        """
+        Delete a user by ID from the database.
+
+        Args:
+            user_id: ID of the user to delete
+
+        Raises:
+            UserDBError: If user not found or database operation fails
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Check if user exists
+                cursor.execute("SELECT id FROM user WHERE id = ?", (user_id,))
+                if cursor.fetchone() is None:
+                    raise UserDBError(f"User with id {user_id} not found")
+                
+                # Delete user
+                cursor.execute("DELETE FROM user WHERE id = ?", (user_id,))
+                conn.commit()
+                
+                logger.info("user_deleted", user_id=user_id)
+        except sqlite3.Error as exc:
+            logger.error("user_delete_failed", user_id=user_id, error=str(exc))
+            raise UserDBError(f"Failed to delete user: {exc}") from exc
 

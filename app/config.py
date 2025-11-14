@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     jenkins_ssm_parameter: str = Field(default="jenkins", env="JENKINS_SSM_PARAMETER")
     # User management database
     user_db_path: str = Field(default="data/users.db", env="USER_DB_PATH")
+    # Entra ID (Azure AD) configuration
+    entra_tenant_id: Optional[str] = Field(default=None, env="TENANT_ID")
+    entra_client_id: Optional[str] = Field(default=None, env="CLIENT_ID")
+    entra_client_secret: Optional[str] = Field(default=None, env="CLIENT_SECRET")
     # CORS configuration (comma-separated list of origins, or "*" for all)
     cors_origins: List[str] = Field(
         default=["*"],

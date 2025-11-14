@@ -71,6 +71,11 @@ class LLMPlanner:
                     "actions": ["trigger_provide_access"],
                     "description": "Triggers Jenkins ProvideAccess-Pipeline for user onboarding. Requires user_email (string) and services (list of: AWS, GitHub, Confluence, Database). Optional: cc_email, aws_iam_user_group, github_team, env_name (defaults to 'dev').",
                 },
+                {
+                    "name": "EntraAgent",
+                    "actions": ["generate_company_email"],
+                    "description": "Generates SSO-enabled company email addresses and creates users in Microsoft Entra ID. Requires firstname (string) and lastname (string). Optional: full_name (string) for display name. Returns generated email address in format: firstname.lastname@Draup381.onmicrosoft.com",
+                },
             ],
         }
         user_prompt = json.dumps(payload, indent=2)

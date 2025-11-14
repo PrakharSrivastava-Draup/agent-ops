@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.entra_routes import router as entra_router
 from app.api.jenkins_routes import router as jenkins_router
 from app.api.routes import router as api_router
 from app.api.user_routes import router as user_router
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
     application.include_router(api_router, prefix="/api")
     application.include_router(jenkins_router, prefix="/api/jenkins", tags=["Jenkins"])
     application.include_router(user_router, prefix="/api/users", tags=["Users"])
+    application.include_router(entra_router, prefix="/api/entra", tags=["Entra"])
     return application
 
 
