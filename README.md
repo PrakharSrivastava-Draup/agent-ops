@@ -1,419 +1,308 @@
-# Minimal Agentic System
+# Agent Ops - Agentic Onboarding System
 
-A prototype-ready FastAPI service that implements a minimal agentic system: one **planning LLM** that orchestrates multiple **access agents** (GitHub, AWS, JIRA, Jenkins). The planning LLM issues actions to the access agents; access agents are simple tool wrappers that call external APIs. The system supports read-only operations and user onboarding via Jenkins pipelines.
+An intelligent agentic system that automates user onboarding and access provisioning. The system uses a Planner Agent that orchestrates multiple specialized agents (AWS, GitHub, Confluence, Entra ID, Jenkins) to fulfill service requests through a Think → Act → Observe lifecycle.
 
 ## Overview
 
-- **Purpose**: Accept a high-level request (JSON) describing a task related to code/repo/infra/tickets/user onboarding. The planning LLM (single LLM) will plan a sequence of tool calls and instruct the access agents (GitHubAgent, AWSAgent, JiraAgent, JenkinsAgent) to perform operations. The API returns a structured plan, the tool call trace, and the final aggregated result produced by the planning LLM after receiving tool outputs.
-- **Operations**: Most operations are read-only. The JenkinsAgent can trigger Jenkins pipelines for user onboarding (provisioning access to AWS, GitHub, Confluence, Database).
-- **Architecture**: Simple and clear implementation prioritizing readability and modularity.
+This system automates the entire user onboarding workflow, from email generation to access provisioning across multiple services. The Planner Agent coordinates specialized agents to complete tasks autonomously without human intervention.
+
+## Architecture
+
+### The Planner Agent Lifecycle: Think → Act → Observe
+
+**THINK:**
+The Planner LLM determines the next step to take based on the current task and context.
+
+**ACT:**
+Based on its decision, the Planner selects an appropriate tool (AWS, GitHub, Confluence, Entra ID agent, or Jenkins) and validates any required preconditions before execution.
+
+**OBSERVE:**
+The results returned by the selected tool are fed back into the LLM as updated context, enabling the Planner to make informed decisions for subsequent steps.
+
+### Persistent Memory
+
+The Planner learns from historical patterns, storing user progress and interaction data in a database. This enables the system to track onboarding status, access provisioning history, and user preferences over time.
+
+### Long-Term Learning
+
+Over time, long-term memory enables the system to recognize usage patterns and service-access behaviors based on user profiles. This learning capability allows the system to optimize access provisioning recommendations and predict common access requirements.
+
+### Multi-Agent & Tool Ecosystem
+
+Each agent operates autonomously, equipped with its own tools and specialized responsibilities:
+
+- **EntraAgent**: Generates SSO-enabled company email addresses and creates users in Microsoft Entra ID
+- **JenkinsAgent**: Triggers Jenkins pipelines for provisioning access to AWS, GitHub, Confluence, and Database services
+- **GitHubAgent**: Performs read-only GitHub operations (PRs, commits, files)
+- **AWSAgent**: Performs read-only AWS operations (S3, EC2)
+- **JiraAgent**: Performs read-only JIRA operations (issues, search)
+
+The Planner orchestrates these agents/tools to fulfill service requests. *(Future scope: individual agents may further evolve to evaluate or summarize service-permission requirements.)*
+
+### No Human-in-the-Loop
+
+The entire workflow is fully automated. The designated POC (Point of Contact) is only notified of the final user-access outcome via email notifications. The system handles:
+
+1. User creation and email generation
+2. Access provisioning across multiple services
+3. Status tracking and updates
+4. Automated notifications
+
+## Features
+
+- **Automated User Onboarding**: Creates users, generates company emails, and provisions access automatically
+- **Agentic Flow**: Intelligent planning and execution of multi-step onboarding processes
+- **Real-time Status Tracking**: Monitors access provisioning status and updates in real-time
+- **Email Notifications**: Automated email notifications to stakeholders about onboarding progress
+- **Persistent State**: All user data, access status, and agent reasoning are stored in a database
+- **RESTful API**: Easy integration with existing systems via FastAPI endpoints
 
 ## Tech Stack
 
 - Python 3.10+
 - FastAPI + Uvicorn
-- httpx for HTTP requests
-- python-dotenv for env loading
-- direct GitHub REST via httpx
-- boto3 for AWS read-only operations (e.g., list S3 buckets, describe instances)
-- jira (jira-python) or direct REST calls for JIRA read operations
-- OpenAI Python SDK (or abstract LLM client supporting alternative providers via env)
-- pydantic for schemas
-- structlog for structured logging
+- OpenAI API (or compatible LLM provider)
+- SQLite (user management database)
+- Microsoft Entra ID / Azure AD (SSO and email generation)
+- Jenkins (access provisioning pipelines)
+- SMTP/Email (notification system)
 
-## Deployment
+## Getting Started
 
-### Railway Deployment
+### Prerequisites
 
-This project is configured for easy deployment on Railway. See [RAILWAY_DEPLOYMENT.md](./RAILWAY_DEPLOYMENT.md) for detailed deployment instructions.
+- Python 3.10 or higher
+- pip (Python package manager)
+- Access to:
+  - OpenAI API (or compatible LLM provider)
+  - Microsoft Entra ID / Azure AD
+  - Jenkins instance
+  - SMTP server (for email notifications)
 
-**Quick Start:**
-1. Push your code to GitHub
-2. Create a new Railway project and connect your GitHub repo
-3. Add environment variables in Railway dashboard
-4. Deploy!
+### Installation
 
-### Local Development
-
-## Environment Variables
-
-Create a `.env` file in the project root with the following variables:
-
+1. **Clone the repository**:
 ```bash
-# Required
-APP_SECRET_KEY=replace-with-random-string
-GITHUB_TOKEN=replace-with-github-token
-
-# Optional - AWS (read-only)
-AWS_ACCESS_KEY_ID=optional-readonly-key
-AWS_SECRET_ACCESS_KEY=optional-readonly-secret
-
-# Optional - JIRA (read-only)
-JIRA_BASE_URL=https://your-domain.atlassian.net
-JIRA_USERNAME=jira-user@example.com
-JIRA_API_TOKEN=jira-api-token
-
-# Optional - LLM Provider (at least one required)
-OPENAI_API_KEY=optional-openai-api-key
-CURSOR_API_KEY=optional-cursor-api-key
-
-# Optional - Logging
-LOG_LEVEL=INFO
+git clone <repository-url>
+cd "Agent Ops"
 ```
 
-### Notes:
-
-- **APP_SECRET_KEY**: Random string for app use (required)
-- **GITHUB_TOKEN**: Read-only token for GitHub API (required)
-- **AWS credentials**: Optional, can rely on local AWS config if not provided
-- **JIRA credentials**: All three (base URL, username, API token) must be provided if JIRA is used
-- **LLM API Key**: At least one of `OPENAI_API_KEY` or `CURSOR_API_KEY` must be provided
-
-## Installation
-
-1. **Clone the repository** (if applicable)
-
 2. **Create a virtual environment**:
-
 ```bash
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
 3. **Install dependencies**:
-
 ```bash
 pip install -r requirements.txt
 ```
 
-4. **Set up environment variables**:
+### Configuration
+
+Create a `.env` file in the project root with the following variables:
 
 ```bash
-cp .env.example .env
-# Edit .env with your credentials
+# Required
+APP_SECRET_KEY=your-random-secret-key-here
+
+# LLM Provider (at least one required)
+OPENAI_API_KEY=your-openai-api-key
+# OR
+CURSOR_API_KEY=your-cursor-api-key
+
+# Microsoft Entra ID / Azure AD (for email generation)
+TENANT_ID=your-tenant-id
+CLIENT_ID=your-client-id
+CLIENT_SECRET=your-client-secret
+
+# Jenkins Configuration
+AWS_REGION=us-east-2
+JENKINS_SSM_PARAMETER=jenkins
+
+# AWS (for SSM Parameter Store access)
+AWS_ACCESS_KEY_ID=your-aws-access-key
+AWS_SECRET_ACCESS_KEY=your-aws-secret-key
+AWS_SESSION_TOKEN=your-aws-session-token  # Optional, for temporary credentials
+
+# Email Notifications (for SMTP)
+SMTP_PASSWORD=your-smtp-password  # Password for prakhar.srivastava@draup.com
+
+# Optional - GitHub (read-only operations)
+GITHUB_TOKEN=your-github-token
+
+# Optional - JIRA (read-only operations)
+JIRA_BASE_URL=https://your-domain.atlassian.net
+JIRA_USERNAME=your-jira-email
+JIRA_API_TOKEN=your-jira-api-token
+
+# Optional - Logging
+LOG_LEVEL=INFO
+LOG_FILE=logs/app.log
 ```
 
-## Running the Server
+### Environment Variables Explained
 
-### Local Development
+- **APP_SECRET_KEY**: Random string for application security (required)
+- **OPENAI_API_KEY** or **CURSOR_API_KEY**: API key for the LLM provider (at least one required)
+- **TENANT_ID, CLIENT_ID, CLIENT_SECRET**: Microsoft Entra ID credentials for email generation (required)
+- **AWS_REGION, JENKINS_SSM_PARAMETER**: AWS and Jenkins configuration (required)
+- **AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY**: AWS credentials for accessing Jenkins credentials from SSM (required)
+- **SMTP_PASSWORD**: Password for sending email notifications (required)
+- **GITHUB_TOKEN**: Optional, for GitHub read-only operations
+- **JIRA credentials**: Optional, for JIRA read-only operations
 
-Run the FastAPI server with Uvicorn:
+### Running the Project
 
+1. **Activate the virtual environment** (if not already activated):
+```bash
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+2. **Start the FastAPI server**:
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 The API will be available at:
-- API: http://localhost:8000
-- API Documentation: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+- **API**: http://localhost:8000
+- **API Documentation (Swagger)**: http://localhost:8000/docs
+- **Alternative Documentation (ReDoc)**: http://localhost:8000/redoc
+
+### Running in Production
+
+For production deployment, use a production ASGI server:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+Or use gunicorn with uvicorn workers:
+
+```bash
+gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+```
 
 ## API Endpoints
 
 ### POST /api/execute_task
 
-Execute a task by planning agent actions, executing them, and synthesizing results.
+Execute a task using the Planner Agent. The agent will plan, execute, and synthesize results.
 
 **Request Body**:
 ```json
 {
-  "task": "Get details about PR #123 in the repository owner/repo",
+  "task": "Generate and save email for user with name John Doe",
   "context": {
-    "owner": "owner",
-    "repo": "repo"
+    "name": "John Doe"
   }
 }
 ```
 
-**Response** (200 OK):
+### POST /api/users/onboard_user
+
+Onboard a new user. This triggers the automated onboarding flow:
+
+1. Creates user in database
+2. After 5 seconds: Generates company email via Entra ID
+3. After another 5 seconds: Provisions access via Jenkins (if access items are pending)
+
+**Request Body**:
 ```json
 {
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "task": "Get details about PR #123 in the repository owner/repo",
-  "plan": [
-    {
-      "step_id": 0,
-      "agent": "GithubAgent",
-      "action": "get_pr",
-      "args": {
-        "owner": "owner",
-        "repo": "repo",
-        "number": 123
-      }
-    }
-  ],
-  "trace": [
-    {
-      "step_id": 0,
-      "agent": "GithubAgent",
-      "action": "get_pr",
-      "request": {
-        "owner": "owner",
-        "repo": "repo",
-        "number": 123
-      },
-      "response_summary": "{\"title\": \"PR Title\", \"author\": \"user\", ...}",
-      "duration_ms": 450,
-      "truncated": false,
-      "warnings": []
-    }
-  ],
-  "final_result": {
-    "type": "structured",
-    "content": {
-      "summary": "PR #123 details retrieved successfully",
-      "recommended_next_steps": ["Review the PR changes", "Check test coverage"],
-      "warnings": []
-    }
-  },
-  "warnings": []
+  "name": "John Doe",
+  "emailid": "",
+  "contact_no": "+1234567890",
+  "location": "Remote",
+  "date_of_joining": "2024-01-15",
+  "level": "L1",
+  "team": "Engineering",
+  "manager": "Jane Smith"
 }
 ```
+
+**Response**: Returns immediately (fire-and-forget). The onboarding flow runs asynchronously in the background.
+
+### GET /api/users/status_all
+
+Get all users and their current onboarding/access status.
+
+### POST /api/users/update_status
+
+Update user status and access items status.
+
+### DELETE /api/users/delete_email_by_name
+
+Delete a user's email by name (sets email to empty string).
 
 ### GET /api/agents
 
-List available agents and their capabilities.
+List all available agents and their capabilities.
 
-**Response** (200 OK):
-```json
-{
-  "GithubAgent": {
-    "name": "GithubAgent",
-    "description": "Read-only GitHub operations (PRs, commits, files)",
-    "actions": ["get_pr", "list_recent_commits", "get_file"]
-  },
-  "AWSAgent": {
-    "name": "AWSAgent",
-    "description": "Read-only AWS operations (S3, EC2)",
-    "actions": ["list_s3_buckets", "describe_ec2_instances", "get_s3_object_head"]
-  },
-  "JiraAgent": {
-    "name": "JiraAgent",
-    "description": "Read-only JIRA operations (issues, search)",
-    "actions": ["get_issue", "search_issues"]
-  },
-  "JenkinsAgent": {
-    "name": "JenkinsAgent",
-    "description": "User onboarding via Jenkins ProvideAccess-Pipeline (AWS, GitHub, Confluence, Database)",
-    "actions": ["trigger_provide_access"]
-  }
-}
-```
+## Agentic Onboarding Flow
 
-## Access Agents
+When a user is onboarded via `/api/users/onboard_user`, the following automated flow is triggered:
 
-### GithubAgent
+1. **User Creation**: User record is created in the database
+2. **Wait 5 seconds**: Allows time for database commit
+3. **Email Generation**: EntraAgent generates a company email address and creates the user in Microsoft Entra ID
+4. **Wait 5 seconds**: Allows time for email to be saved
+5. **Access Provisioning**: JenkinsAgent provisions access for services that are:
+   - Present in the user's `access_items_status` as "pending"
+   - Among the supported services: AWS, GitHub, Confluence, Database
+6. **Status Updates**: Access items status is updated to "completed" after successful provisioning
+7. **Notifications**: Email notifications are sent to:
+   - `suchanya.p@draup.com` when email is generated
+   - `salman.b@draup.com` when Jenkins access is provisioned
 
-- `get_pr(owner, repo, number)` - Returns PR title, author, body, list of changed files (paths), and small unified diff hunks (truncated if long)
-- `list_recent_commits(owner, repo, branch, limit=20)` - Returns commit messages and authors
-- `get_file(owner, repo, path, ref)` - Returns file content up to a safe max length
+## Database Schema
 
-### AWSAgent
+The system uses SQLite to store:
+- User information (name, email, contact details, etc.)
+- Access items status (tracking pending/completed access provisioning)
+- AI live reasoning (one-liner updates about what agents are doing with timestamps)
 
-- `list_s3_buckets()` - List bucket names (or limited sample)
-- `describe_ec2_instances(region)` - List instance IDs and basic metadata
-- `get_s3_object_head(bucket, key)` - Returns metadata only (no object download)
+## Logging
 
-### JiraAgent
+The application uses structured logging (structlog) that outputs JSON logs. Logs include:
+- Request IDs for tracing
+- Agent actions and responses
+- Execution durations
+- Errors and warnings
+- User onboarding progress
 
-- `get_issue(issue_key)` - Returns title, description, reporter, status, comments (first N)
-- `search_issues(jql, limit=20)` - List of issues with key and summary
-
-### JenkinsAgent
-
-- `trigger_provide_access(user_email, services, ...)` - Triggers Jenkins ProvideAccess-Pipeline for user onboarding
-  - `user_email`: Email address of the user to onboard (required)
-  - `services`: List of services to provision (required, must be subset of: AWS, GitHub, Confluence, Database)
-  - `cc_email`: Optional CC email for notifications
-  - Returns pipeline status and queue URL
-
-## Example Requests
-
-### Example 1: Get GitHub PR Details
-
-```bash
-curl -X POST "http://localhost:8000/api/execute_task" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task": "Get details about PR #123 in the repository owner/repo",
-    "context": {
-      "owner": "owner",
-      "repo": "repo"
-    }
-  }'
-```
-
-### Example 2: List Recent Commits
-
-```bash
-curl -X POST "http://localhost:8000/api/execute_task" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task": "List the last 10 commits from the main branch in owner/repo",
-    "context": {
-      "owner": "owner",
-      "repo": "repo",
-      "branch": "main"
-    }
-  }'
-```
-
-### Example 3: Get JIRA Issue
-
-```bash
-curl -X POST "http://localhost:8000/api/execute_task" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task": "Get details about JIRA issue PROJ-123",
-    "context": {}
-  }'
-```
-
-### Example 4: List AWS S3 Buckets
-
-```bash
-curl -X POST "http://localhost:8000/api/execute_task" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task": "List all S3 buckets in my AWS account",
-    "context": {}
-  }'
-```
-
-### Example 5: User Onboarding (Natural Language)
-
-```bash
-curl -X POST "http://localhost:8000/api/execute_task" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task": "Onboard john.doe@example.com with AWS and GitHub access",
-    "context": {}
-  }'
-```
-
-### Example 6: User Onboarding (Structured Endpoint)
-
-```bash
-curl -X POST "http://localhost:8000/api/onboard_user" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_email": "john.doe@example.com",
-    "services": ["AWS", "GitHub"],
-    "cc_email": "manager@example.com"
-  }'
-```
-
-**Response** (200 OK):
-```json
-{
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "task": "Onboard john.doe@example.com with access to AWS, GitHub",
-  "plan": [
-    {
-      "step_id": 0,
-      "agent": "JenkinsAgent",
-      "action": "trigger_provide_access",
-      "args": {
-        "user_email": "john.doe@example.com",
-        "services": ["AWS", "GitHub"]
-      }
-    }
-  ],
-  "trace": [
-    {
-      "step_id": 0,
-      "agent": "JenkinsAgent",
-      "action": "trigger_provide_access",
-      "request": {
-        "user_email": "john.doe@example.com",
-        "services": ["AWS", "GitHub"]
-      },
-      "response_summary": "{\"success\": true, \"queue_url\": \"https://jenkins.example.com/queue/item/12345/\", ...}",
-      "duration_ms": 1200,
-      "truncated": false,
-      "warnings": []
-    }
-  ],
-  "final_result": {
-    "type": "structured",
-    "content": {
-      "summary": "User onboarding initiated successfully. Jenkins pipeline triggered for john.doe@example.com with AWS and GitHub access.",
-      "recommended_next_steps": ["Monitor Jenkins pipeline status", "Verify access provisioning"],
-      "warnings": []
-    }
-  },
-  "warnings": []
-}
-```
-
-## Logging & Tracing
-
-- **Structured Logging**: The application uses structlog for structured JSON logging. Logs include timestamps, request IDs, step IDs, agent names, actions, durations, and status.
-- **Trace Persistence**: Execution traces are saved to the `traces/` directory as JSON files named by request ID (`{request_id}.json`). These traces include plan steps, execution traces, and final results (but exclude raw LLM prompts and full tool outputs for security).
-
-## Validation & Safety
-
-- **Plan Validation**: The planning LLM's plan is validated against a whitelist of allowed agents and actions. Disallowed actions result in a clear error.
-- **Input Sanitization**: Network and file path arguments are sanitized to prevent SSRF and local file access.
-- **Read-Only Semantics**: Code never calls GitHub/Git write APIs or JIRA write endpoints. If a write is implied, the planning LLM returns a suggested action but does not execute it.
-- **Rate Limiting**: LLM calls are rate-limited with a simple in-process semaphore limiting concurrency to 1.
-
-## Project Structure
-
-```
-.
-├── app/
-│   ├── __init__.py
-│   ├── main.py                 # FastAPI application entry point
-│   ├── config.py               # Configuration and settings
-│   ├── api/
-│   │   ├── __init__.py
-│   │   ├── routes.py           # API endpoints
-│   │   └── dependencies.py     # FastAPI dependencies
-│   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── base.py             # Base agent class
-│   │   ├── github_agent.py     # GitHub agent implementation
-│   │   ├── aws_agent.py        # AWS agent implementation
-│   │   └── jira_agent.py       # JIRA agent implementation
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── llm_client.py       # LLM client wrapper
-│   │   ├── llm_planner.py      # LLM planner implementation
-│   │   ├── plan_validator.py   # Plan validation logic
-│   │   └── orchestrator.py     # Task orchestration logic
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── schemas.py          # Pydantic schemas
-│   └── utils/
-│       ├── __init__.py
-│       ├── logging.py          # Logging configuration
-│       ├── sanitization.py     # Input sanitization utilities
-│       └── trace_persistence.py # Trace persistence utilities
-├── traces/                     # Trace files (created at runtime)
-├── .env.example                # Environment variables template
-├── requirements.txt            # Python dependencies
-└── README.md                   # This file
-```
+Logs are written to `logs/app.log` by default.
 
 ## Error Handling
 
-The API returns appropriate HTTP status codes:
+- Email generation failures are logged but don't stop the onboarding flow
+- Jenkins trigger failures are logged and reported in the response
+- Database errors are caught and logged with detailed error messages
+- All errors are stored in structured logs for debugging
 
-- `200 OK`: Task executed successfully
-- `400 Bad Request`: Invalid request body or validation error
-- `500 Internal Server Error`: Task execution failed or unexpected error
+## Security Considerations
 
-Errors include detailed messages in the response body and are logged with structured logging.
+- All agent actions are validated against a whitelist
+- User input is sanitized to prevent injection attacks
+- Database connections are managed securely
+- SMTP credentials are stored as environment variables
+- Jenkins credentials are retrieved securely from AWS SSM Parameter Store
 
 ## Limitations
 
-- **Read-Only Operations**: The system only performs read-only operations. Write operations are not supported.
-- **Sequential Execution**: Plan steps are executed sequentially (not in parallel).
-- **Single LLM**: Uses a single planning LLM for both planning and synthesis.
-- **Local Execution**: Designed to run locally without Docker (though Docker can be added if needed).
+- Sequential execution: Plan steps are executed one at a time
+- Single LLM: Uses a single planning LLM for both planning and synthesis
+- Email notifications require SMTP password to be configured
+- Access provisioning depends on Jenkins pipeline availability
+
+## Future Enhancements
+
+- Parallel execution of independent agent actions
+- Agent self-evaluation and summarization capabilities
+- Advanced pattern recognition for access requirements
+- Support for additional service providers
+- Webhook integrations for real-time updates
 
 ## License
 
-This is a prototype/minimal implementation for learning agentic flows.
-
+This is a prototype/minimal implementation for learning agentic flows and automated onboarding systems.
