@@ -11,6 +11,8 @@ from app.agents.base import AgentError, AgentResponse, BaseAgent
 from app.config import Settings, get_settings
 from app.services.entra_service import EntraService, EntraServiceError
 from app.services.user_db import UserDB, UserDBError
+from app.services.user_service import UserService, UserServiceError
+from app.services.email_service import EmailService, EmailServiceError
 from app.utils.logging import get_logger
 
 logger = get_logger("EntraAgent")
@@ -342,6 +344,63 @@ class EntraAgent(BaseAgent):
                     verified_email=updated_user_verify.get("emailid"),
                 )
                 
+                # Send notification email to suchanya.p@draup.com
+                try:
+                    email_service = EmailService()
+                    user_name = updated_user_verify.get("name", "User")
+                    email_subject = "This is a test mail for hackethon"
+                    email_body = f"""Dear Team,
+
+This is to inform you that the SSO email account has been successfully created for the following user:
+
+User Name: {user_name}
+Email Address: {generated_email}
+
+The user account has been provisioned in Microsoft Entra ID and is ready for use.
+
+Best regards,
+Agent Ops System"""
+                    
+                    await asyncio.to_thread(
+                        email_service.send_email,
+                        to_email="prakhar.srivastava@draup.com",
+                        subject=email_subject,
+                        body=email_body,
+                    )
+                    self._log_info(
+                        "entra_email_notification_sent",
+                        user_id=user_id,
+                        user_email=generated_email,
+                        recipient="prakhar.srivastava@draup.com",
+                    )
+                except Exception as e:
+                    # Log error but don't fail the response - email generation was successful
+                    self._log_error(
+                        "entra_email_notification_failed",
+                        user_id=user_id,
+                        user_email=generated_email,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+                
+                # Update Email/SSO status to 'completed' in access_items_status
+                warnings_list = []
+                try:
+                    await self._update_email_sso_status(user_id=user_id, user_email=generated_email)
+                except Exception as e:
+                    # Log error but don't fail the response - email generation was successful
+                    self._log_error(
+                        "email_sso_status_update_failed",
+                        user_id=user_id,
+                        user_email=generated_email,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+                    # Add warning to response
+                    warnings_list.append(
+                        f"Email generation succeeded but failed to update Email/SSO status: {str(e)}"
+                    )
+                
             except UserDBError as e:
                 raise AgentError(f"Failed to save email to database: {str(e)}") from e
 
@@ -370,7 +429,9 @@ class EntraAgent(BaseAgent):
                     email=generated_email,
                 )
 
-                return AgentResponse(data=response_data)
+                # Include warnings if any
+                response_warnings = warnings_list if warnings_list else None
+                return AgentResponse(data=response_data, warnings=response_warnings)
 
             except UserDBError as e:
                 # Email was saved but failed to fetch updated user - still return success
@@ -401,4 +462,118 @@ class EntraAgent(BaseAgent):
                 error_type=type(e).__name__,
             )
             raise AgentError(f"Unexpected error generating and saving email: {str(e)}") from e
+
+    async def _update_email_sso_status(
+        self,
+        user_id: int,
+        user_email: str,
+    ) -> None:
+        """
+        Update access_items_status for Email/SSO to 'completed' after successful email generation.
+        
+        Args:
+            user_id: User ID to identify the user
+            user_email: User email address (for logging and identification)
+        """
+        try:
+            # Get settings and create UserService
+            settings = get_settings()
+            user_db = UserDB(db_path=settings.user_db_path)
+            user_service = UserService(db=user_db)
+            
+            # Find user by ID
+            user = None
+            all_users = user_db.get_all_users()
+            for u in all_users:
+                if u.get("id") == user_id:
+                    user = u
+                    break
+            
+            if not user:
+                self._log_warning(
+                    "user_not_found_for_email_sso_update",
+                    user_id=user_id,
+                    user_email=user_email,
+                )
+                return
+            
+            # Get current access_items_status
+            access_items_status = user.get("access_items_status", [])
+            
+            # Possible names for Email/SSO item (case-insensitive matching)
+            email_sso_names = ["email", "sso", "email/sso", "email & sso", "email and sso", "entra", "microsoft entra", "entra id"]
+            
+            # Prepare updates for Email/SSO items
+            access_items_updates = []
+            for item in access_items_status:
+                item_name = item.get("item", "").strip()
+                item_status = item.get("status", "").strip()
+                
+                # Normalize item name for comparison
+                item_name_normalized = item_name.lower().strip()
+                
+                # Check if this item matches any Email/SSO variations
+                if item_name_normalized in email_sso_names:
+                    # Update to 'completed' status
+                    access_items_updates.append({
+                        "item": item_name,  # Use original item name from DB
+                        "status": "completed",
+                    })
+                    self._log_info(
+                        "email_sso_item_marked_for_completion",
+                        user_id=user_id,
+                        user_email=user_email,
+                        item=item_name,
+                    )
+            
+            # Only update if there are items to update
+            if not access_items_updates:
+                self._log_warning(
+                    "no_matching_email_sso_items_for_update",
+                    user_id=user_id,
+                    user_email=user_email,
+                    access_items=[item.get("item") for item in access_items_status],
+                )
+                return
+            
+            # Update user status
+            user_service.update_user_status(
+                emailid=user_email,
+                status=None,  # Don't update overall status
+                access_items_status=access_items_updates,
+            )
+            
+            self._log_info(
+                "email_sso_status_updated",
+                user_id=user_id,
+                user_email=user_email,
+                updated_items_count=len(access_items_updates),
+                updated_items=[item["item"] for item in access_items_updates],
+            )
+            
+        except UserServiceError as e:
+            self._log_error(
+                "user_service_error_updating_email_sso",
+                user_id=user_id,
+                user_email=user_email,
+                error=str(e),
+            )
+            raise
+        except UserDBError as e:
+            self._log_error(
+                "user_db_error_updating_email_sso",
+                user_id=user_id,
+                user_email=user_email,
+                error=str(e),
+            )
+            raise
+        except Exception as e:
+            self._log_error(
+                "unexpected_error_updating_email_sso",
+                user_id=user_id,
+                user_email=user_email,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            raise
 

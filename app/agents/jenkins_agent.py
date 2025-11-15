@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.services.jenkins_service import JenkinsService, JenkinsServiceError
 from app.services.user_db import UserDB, UserDBError
 from app.services.user_service import UserService, UserServiceError
+from app.services.email_service import EmailService, EmailServiceError
 from app.utils.logging import get_logger
 
 logger = get_logger("JenkinsAgent")
@@ -202,7 +203,7 @@ class JenkinsAgent(BaseAgent):
 
             # Check if Jenkins trigger was successful
             jenkins_success = result.get("success", False)
-            
+
             # Format response
             response_data = {
                 "success": jenkins_success,
@@ -224,6 +225,57 @@ class JenkinsAgent(BaseAgent):
 
             # If Jenkins trigger was successful, wait 5 seconds then update access_items_status in DB
             if jenkins_success:
+                # Send notification email to salman.b@draup.com
+                try:
+                    email_service = EmailService()
+                    services_str = ", ".join(sorted(list(services_set)))
+                    queue_url = result.get("queue_url", "N/A")
+                    
+                    # Get user name from database
+                    settings = get_settings()
+                    user_db = UserDB(db_path=settings.user_db_path)
+                    user = user_db.get_user_by_emailid(user_email)
+                    user_name = user.get("name", "User") if user else "User"
+                    
+                    email_subject = "This is a test mail for hackethon"
+                    email_body = f"""Dear Team,
+
+This is to inform you that Jenkins access has been successfully provisioned.
+
+User Details:
+- User Name: {user_name}
+- Email Address: {user_email}
+
+Access Provided:
+- Services: {services_str}
+- Queue URL: {queue_url}
+
+The access provisioning pipeline has been triggered successfully in Jenkins.
+
+Best regards,
+Agent Ops System"""
+                    
+                    await asyncio.to_thread(
+                        email_service.send_email,
+                        to_email="prakhar.srivastava@draup.com",
+                        subject=email_subject,
+                        body=email_body,
+                    )
+                    self._log_info(
+                        "jenkins_email_notification_sent",
+                        user_email=user_email,
+                        services=services_str,
+                        recipient="prakhar.srivastava@draup.com",
+                    )
+                except Exception as e:
+                    # Log error but don't fail the response - Jenkins trigger was successful
+                    self._log_error(
+                        "jenkins_email_notification_failed",
+                        user_email=user_email,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+                
                 # Add entry to ai_live_reasoning after successful Jenkins trigger
                 try:
                     settings = get_settings()
