@@ -297,3 +297,25 @@ class UserService:
             logger.error("delete_user_failed", user_id=user_id, error=str(exc))
             raise UserServiceError(f"Failed to delete user: {exc}") from exc
 
+    def delete_user_email_by_name(self, name: str) -> Dict[str, Any]:
+        """
+        Delete email address for a user by name.
+        Sets emailid to empty string.
+
+        Args:
+            name: User name to identify the user
+
+        Returns:
+            Updated user data dictionary
+
+        Raises:
+            UserServiceError: If user not found or database operation fails
+        """
+        try:
+            user_data = self.db.delete_email_by_name(name)
+            logger.info("user_email_deleted_by_name", name=name, user_id=user_data.get("id"))
+            return user_data
+        except UserDBError as exc:
+            logger.error("delete_user_email_by_name_failed", name=name, error=str(exc))
+            raise UserServiceError(f"Failed to delete email for user '{name}': {exc}") from exc
+

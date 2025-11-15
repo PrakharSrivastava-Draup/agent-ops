@@ -58,9 +58,20 @@ class UserDB:
                         team TEXT,
                         manager TEXT,
                         status TEXT,
-                        access_items_status TEXT
+                        access_items_status TEXT,
+                        ai_live_reasoning TEXT
                     )
                 """)
+                
+                # Add ai_live_reasoning column if it doesn't exist (for existing databases)
+                try:
+                    cursor.execute("""
+                        ALTER TABLE user ADD COLUMN ai_live_reasoning TEXT
+                    """)
+                    logger.info("ai_live_reasoning_column_added")
+                except sqlite3.OperationalError:
+                    # Column already exists, ignore
+                    pass
                 
                 # Add unique constraint on name if table already exists and constraint doesn't exist
                 # This handles the case where the table was created before the unique constraint
@@ -116,14 +127,16 @@ class UserDB:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 access_items_json = json.dumps(access_items_status)
+                # Default ai_live_reasoning to empty array
+                ai_live_reasoning_json = json.dumps([])
                 cursor.execute("""
                     INSERT INTO user (
                         name, emailid, contact_no, location, date_of_joining,
-                        level, team, manager, status, access_items_status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        level, team, manager, status, access_items_status, ai_live_reasoning
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     name, emailid, contact_no, location, date_of_joining,
-                    level, team, manager, status, access_items_json
+                    level, team, manager, status, access_items_json, ai_live_reasoning_json
                 ))
                 user_id = cursor.lastrowid
                 conn.commit()
@@ -149,6 +162,11 @@ class UserDB:
                     user_dict["access_items_status"] = json.loads(user_dict["access_items_status"])
                 else:
                     user_dict["access_items_status"] = []
+                # Parse JSON ai_live_reasoning
+                if user_dict.get("ai_live_reasoning"):
+                    user_dict["ai_live_reasoning"] = json.loads(user_dict["ai_live_reasoning"])
+                else:
+                    user_dict["ai_live_reasoning"] = []
                 logger.info("user_fetched_by_email", emailid=emailid)
                 return user_dict
         except sqlite3.Error as exc:
@@ -180,6 +198,11 @@ class UserDB:
                         user_dict["access_items_status"] = json.loads(user_dict["access_items_status"])
                     else:
                         user_dict["access_items_status"] = []
+                    # Parse JSON ai_live_reasoning
+                    if user_dict.get("ai_live_reasoning"):
+                        user_dict["ai_live_reasoning"] = json.loads(user_dict["ai_live_reasoning"])
+                    else:
+                        user_dict["ai_live_reasoning"] = []
                     users.append(user_dict)
                 logger.info("users_fetched_by_name", name=name, count=len(users))
                 return users
@@ -203,6 +226,11 @@ class UserDB:
                         user_dict["access_items_status"] = json.loads(user_dict["access_items_status"])
                     else:
                         user_dict["access_items_status"] = []
+                    # Parse JSON ai_live_reasoning
+                    if user_dict.get("ai_live_reasoning"):
+                        user_dict["ai_live_reasoning"] = json.loads(user_dict["ai_live_reasoning"])
+                    else:
+                        user_dict["ai_live_reasoning"] = []
                     users.append(user_dict)
                 logger.info("users_fetched", count=len(users))
                 return users
@@ -353,19 +381,31 @@ class UserDB:
                 
                 conn.commit()
                 
+                # Get updated user data to include ai_live_reasoning
+                cursor.execute("SELECT * FROM user WHERE emailid = ?", (emailid,))
+                updated_row = cursor.fetchone()
+                updated_user_dict = dict(updated_row)
+                
+                # Parse JSON ai_live_reasoning
+                if updated_user_dict.get("ai_live_reasoning"):
+                    ai_live_reasoning = json.loads(updated_user_dict["ai_live_reasoning"])
+                else:
+                    ai_live_reasoning = []
+                
                 # Return updated user data
                 updated_user = {
-                    "id": user_dict["id"],
-                    "name": user_dict["name"],
-                    "emailid": user_dict["emailid"],
-                    "contact_no": user_dict["contact_no"],
-                    "location": user_dict["location"],
-                    "date_of_joining": user_dict["date_of_joining"],
-                    "level": user_dict["level"],
-                    "team": user_dict["team"],
-                    "manager": user_dict["manager"],
+                    "id": updated_user_dict["id"],
+                    "name": updated_user_dict["name"],
+                    "emailid": updated_user_dict["emailid"],
+                    "contact_no": updated_user_dict["contact_no"],
+                    "location": updated_user_dict["location"],
+                    "date_of_joining": updated_user_dict["date_of_joining"],
+                    "level": updated_user_dict["level"],
+                    "team": updated_user_dict["team"],
+                    "manager": updated_user_dict["manager"],
                     "status": new_status_value,
                     "access_items_status": access_items_status,
+                    "ai_live_reasoning": ai_live_reasoning,
                 }
                 
                 logger.info(
@@ -391,26 +431,64 @@ class UserDB:
             UserDBError: If user not found or database operation fails
         """
         try:
-            with self.get_connection() as conn:
+            conn = self.get_connection()
+            try:
                 cursor = conn.cursor()
                 
-                # Check if user exists
-                cursor.execute("SELECT id FROM user WHERE id = ?", (user_id,))
-                if cursor.fetchone() is None:
+                # Check if user exists and get current email
+                cursor.execute("SELECT id, emailid FROM user WHERE id = ?", (user_id,))
+                row = cursor.fetchone()
+                if row is None:
                     raise UserDBError(f"User with id {user_id} not found")
+                
+                current_email = row[1] if len(row) > 1 else None
+                logger.info(
+                    "updating_user_email",
+                    user_id=user_id,
+                    current_email=current_email,
+                    new_email=new_emailid,
+                )
                 
                 # Update email
                 cursor.execute(
                     "UPDATE user SET emailid = ? WHERE id = ?",
                     (new_emailid, user_id)
                 )
+                
+                # Verify the update affected a row
+                if cursor.rowcount == 0:
+                    raise UserDBError(f"Update failed: No rows affected for user_id {user_id}")
+                
+                # Commit the transaction
                 conn.commit()
+                
+                # Verify the update by querying again
+                cursor.execute("SELECT emailid FROM user WHERE id = ?", (user_id,))
+                verify_row = cursor.fetchone()
+                if verify_row is None:
+                    raise UserDBError(f"User with id {user_id} not found after update")
+                
+                updated_email = verify_row[0]
+                if updated_email != new_emailid:
+                    logger.error(
+                        "email_update_verification_failed",
+                        user_id=user_id,
+                        expected_email=new_emailid,
+                        actual_email=updated_email,
+                    )
+                    raise UserDBError(
+                        f"Email update verification failed. Expected: {new_emailid}, Got: {updated_email}"
+                    )
                 
                 logger.info(
                     "user_email_updated",
                     user_id=user_id,
+                    old_email=current_email,
                     new_emailid=new_emailid,
+                    verified=True,
                 )
+            finally:
+                conn.close()
         except sqlite3.Error as exc:
             logger.error(
                 "user_email_update_failed",
@@ -447,4 +525,163 @@ class UserDB:
         except sqlite3.Error as exc:
             logger.error("user_delete_failed", user_id=user_id, error=str(exc))
             raise UserDBError(f"Failed to delete user: {exc}") from exc
+
+    def delete_email_by_name(self, name: str) -> Dict[str, Any]:
+        """
+        Delete email address for a user by name (case-insensitive).
+        Sets emailid to empty string.
+
+        Args:
+            name: User name to identify the user
+
+        Returns:
+            Updated user data dictionary
+
+        Raises:
+            UserDBError: If user not found or database operation fails
+        """
+        try:
+            with self.get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                # Find user by name (case-insensitive)
+                cursor.execute("SELECT * FROM user WHERE LOWER(name) = LOWER(?)", (name,))
+                row = cursor.fetchone()
+                
+                if row is None:
+                    raise UserDBError(f"User with name '{name}' not found")
+                
+                # Convert row to dict
+                user_dict = dict(row)
+                user_id = user_dict["id"]
+                
+                # Update email to empty string
+                cursor.execute(
+                    "UPDATE user SET emailid = ? WHERE id = ?",
+                    ("", user_id)
+                )
+                conn.commit()
+                
+                # Get updated user data
+                cursor.execute("SELECT * FROM user WHERE id = ?", (user_id,))
+                updated_row = cursor.fetchone()
+                updated_user_dict = dict(updated_row)
+                
+                # Parse JSON access_items_status
+                if updated_user_dict.get("access_items_status"):
+                    updated_user_dict["access_items_status"] = json.loads(updated_user_dict["access_items_status"])
+                else:
+                    updated_user_dict["access_items_status"] = []
+                # Parse JSON ai_live_reasoning
+                if updated_user_dict.get("ai_live_reasoning"):
+                    updated_user_dict["ai_live_reasoning"] = json.loads(updated_user_dict["ai_live_reasoning"])
+                else:
+                    updated_user_dict["ai_live_reasoning"] = []
+                
+                logger.info(
+                    "user_email_deleted_by_name",
+                    name=name,
+                    user_id=user_id,
+                    previous_email=user_dict.get("emailid"),
+                )
+                
+                return updated_user_dict
+        except sqlite3.Error as exc:
+            logger.error(
+                "user_email_delete_by_name_failed",
+                name=name,
+                error=str(exc),
+            )
+            raise UserDBError(f"Failed to delete email for user '{name}': {exc}") from exc
+
+    def append_ai_live_reasoning(
+        self,
+        message: str,
+        user_id: Optional[int] = None,
+        user_email: Optional[str] = None,
+    ) -> None:
+        """
+        Append a one-liner message with timestamp to user's ai_live_reasoning array.
+        
+        Args:
+            message: One-liner message describing what the agent is doing
+            user_id: User ID to identify the user (preferred)
+            user_email: User email to identify the user (if user_id not provided)
+            
+        Raises:
+            UserDBError: If user not found or database operation fails
+        """
+        try:
+            conn = self.get_connection()
+            try:
+                # Set row factory to get dict-like access
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                # Find user by ID or email
+                user_dict = None
+                if user_id:
+                    cursor.execute("SELECT * FROM user WHERE id = ?", (user_id,))
+                    row = cursor.fetchone()
+                    if row:
+                        user_dict = dict(row)
+                elif user_email:
+                    cursor.execute("SELECT * FROM user WHERE emailid = ?", (user_email,))
+                    row = cursor.fetchone()
+                    if row:
+                        user_dict = dict(row)
+                
+                if not user_dict:
+                    identifier = f"ID {user_id}" if user_id else f"email {user_email}"
+                    raise UserDBError(f"User with {identifier} not found")
+                
+                # Get current ai_live_reasoning
+                current_reasoning = []
+                if user_dict.get("ai_live_reasoning"):
+                    try:
+                        current_reasoning = json.loads(user_dict["ai_live_reasoning"])
+                    except (json.JSONDecodeError, TypeError):
+                        current_reasoning = []
+                
+                # Add new entry with timestamp
+                timestamp = int(time.time() * 1000)  # Unix timestamp in milliseconds
+                new_entry = {
+                    "message": message,
+                    "timestamp": timestamp,
+                }
+                current_reasoning.append(new_entry)
+                
+                # Update database
+                reasoning_json = json.dumps(current_reasoning)
+                if user_id:
+                    cursor.execute(
+                        "UPDATE user SET ai_live_reasoning = ? WHERE id = ?",
+                        (reasoning_json, user_id)
+                    )
+                else:
+                    cursor.execute(
+                        "UPDATE user SET ai_live_reasoning = ? WHERE emailid = ?",
+                        (reasoning_json, user_email)
+                    )
+                
+                conn.commit()
+                
+                logger.info(
+                    "ai_live_reasoning_appended",
+                    user_id=user_dict.get("id"),
+                    user_email=user_dict.get("emailid"),
+                    message=message,
+                    total_entries=len(current_reasoning),
+                )
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            logger.error(
+                "ai_live_reasoning_append_failed",
+                user_id=user_id,
+                user_email=user_email,
+                error=str(exc),
+            )
+            raise UserDBError(f"Failed to append ai_live_reasoning: {exc}") from exc
 
