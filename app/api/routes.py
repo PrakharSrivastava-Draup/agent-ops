@@ -66,7 +66,7 @@ async def list_agents() -> Dict[str, AgentDescriptor]:
         "AWSAgent": "Read-only AWS operations (S3, EC2)",
         "JiraAgent": "Read-only JIRA operations (issues, search)",
         "JenkinsAgent": "User onboarding via Jenkins ProvideAccess-Pipeline (AWS, GitHub, Confluence, Database)",
-        "EntraAgent": "Generate SSO-enabled company email addresses and create users in Microsoft Entra ID",
+        "EntraAgent": "Generate SSO-enabled company email addresses and create users in Microsoft Entra ID. Can generate email only or generate and save to database.",
     }
 
     for agent_name, actions in ALLOWED_ACTIONS.items():

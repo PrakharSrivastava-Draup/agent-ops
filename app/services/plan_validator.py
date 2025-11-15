@@ -45,6 +45,13 @@ ALLOWED_ACTIONS: Dict[str, Dict[str, Dict[str, tuple[type, bool]]]] = {
             "lastname": (str, True),
             "full_name": (str, False),
         },
+        "generate_and_save_email": {
+            "user_id": (int, False),
+            "name": (str, False),
+            "firstname": (str, False),
+            "lastname": (str, False),
+            "full_name": (str, False),
+        },
     },
 }
 
@@ -78,6 +85,11 @@ class PlanValidator:
             # Custom validation for JenkinsAgent
             if step.agent == "JenkinsAgent" and step.action == "trigger_provide_access":
                 self._validate_jenkins_services(step.args)
+                self._validate_jenkins_team_names(step.args)
+            
+            # Custom validation for EntraAgent generate_and_save_email
+            if step.agent == "EntraAgent" and step.action == "generate_and_save_email":
+                self._validate_entra_email_args(step.args)
             
             validated_steps.append(step)
         return validated_steps
@@ -133,4 +145,38 @@ class PlanValidator:
         
         # Normalize services list
         args["services"] = sorted(list(services_set))
+
+    def _validate_jenkins_team_names(self, args: dict[str, Any]) -> None:
+        """Validate that aws_iam_user_group and github_team contain only valid team names (case-sensitive)."""
+        VALID_AWS_IAM_USER_GROUPS = {"DraupAppBackend", "DraupAppFrontend", "MathTeam"}
+        VALID_GITHUB_TEAMS = {"DraupAppBackend", "DraupAppFrontend", "MathTeam"}
+        
+        # Validate aws_iam_user_group if provided
+        if "aws_iam_user_group" in args and args["aws_iam_user_group"]:
+            team_name = str(args["aws_iam_user_group"]).strip()
+            if team_name not in VALID_AWS_IAM_USER_GROUPS:
+                raise PlanValidationError(
+                    f"Invalid aws_iam_user_group: '{team_name}'. "
+                    f"Valid values are: {sorted(VALID_AWS_IAM_USER_GROUPS)} (case-sensitive)"
+                )
+            # Ensure exact case-sensitive value
+            args["aws_iam_user_group"] = team_name
+        
+        # Validate github_team if provided
+        if "github_team" in args and args["github_team"]:
+            team_name = str(args["github_team"]).strip()
+            if team_name not in VALID_GITHUB_TEAMS:
+                raise PlanValidationError(
+                    f"Invalid github_team: '{team_name}'. "
+                    f"Valid values are: {sorted(VALID_GITHUB_TEAMS)} (case-sensitive)"
+                )
+            # Ensure exact case-sensitive value
+            args["github_team"] = team_name
+
+    def _validate_entra_email_args(self, args: dict[str, Any]) -> None:
+        """Validate that either user_id or name is provided for generate_and_save_email."""
+        if "user_id" not in args and "name" not in args:
+            raise PlanValidationError(
+                "Either 'user_id' or 'name' must be provided for EntraAgent.generate_and_save_email action"
+            )
 

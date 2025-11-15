@@ -4,20 +4,24 @@ API routes for user management operations.
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.api.dependencies import get_app_settings
+from app.api.dependencies import get_app_settings, get_orchestrator
 from app.config import Settings, get_settings
 from app.models.schemas import (
     AccessItemStatus,
+    AILiveReasoningEntry,
     OnboardUserRequest,
     POCConfigEntry,
     UpdateUserStatusRequest,
     UserResponse,
 )
+from app.services.onboard_flow import execute_onboard_flow
+from app.services.orchestrator import TaskOrchestrator
 from app.services.user_db import UserDB
 from app.services.user_service import UserService, UserServiceError
 from app.utils.logging import get_logger
@@ -106,7 +110,9 @@ def get_user_service(db: UserDB = Depends(get_user_db)) -> UserService:
 @router.post("/onboard_user", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def onboard_user(
     payload: OnboardUserPayload = Body(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     user_service: UserService = Depends(get_user_service),
+    orchestrator: TaskOrchestrator = Depends(get_orchestrator),
 ) -> UserResponse:
     """
     Onboard a new user.
@@ -159,6 +165,14 @@ async def onboard_user(
             access_items = [
                 AccessItemStatus(**item) for item in existing_user.get("access_items_status", [])
             ]
+            # Convert ai_live_reasoning to AILiveReasoningEntry objects
+            ai_reasoning = []
+            for entry in existing_user.get("ai_live_reasoning", []):
+                if isinstance(entry, dict):
+                    ai_reasoning.append(AILiveReasoningEntry(**entry))
+                elif isinstance(entry, str):
+                    # Handle legacy string format (if any)
+                    ai_reasoning.append(AILiveReasoningEntry(message=entry, timestamp=int(time.time() * 1000)))
             return UserResponse(
                 id=existing_user["id"],
                 name=existing_user["name"],
@@ -171,21 +185,11 @@ async def onboard_user(
                 manager=existing_user["manager"],
                 status=existing_user["status"],
                 access_items_status=access_items,
+                ai_live_reasoning=ai_reasoning,
             )
         
-        # User doesn't exist or doesn't have emailid - generate company email
-        # Extract firstname and lastname from fullName
-        name_parts = request.name.strip().split()
-        if len(name_parts) < 2:
-            # If only one name part, use it as both first and last name
-            firstname = name_parts[0] if name_parts else "User"
-            lastname = name_parts[0] if name_parts else "User"
-        else:
-            # First part is firstname, rest is lastname
-            firstname = name_parts[0]
-            lastname = " ".join(name_parts[1:])
-        
-        # Create user first (with empty email if not provided)
+        # User doesn't exist or doesn't have emailid - create user with provided email or empty string
+        # Create user (with email if provided, otherwise empty string)
         user_data = user_service.onboard_user(
             name=request.name,
             emailid=request.emailid or "",  # Empty string if no email provided
@@ -197,36 +201,42 @@ async def onboard_user(
             manager=request.manager,
         )
         
-        # Generate company email and update user record
+        # Schedule background task for agentic onboarding flow (fire-and-forget)
         try:
             settings = get_settings()
-            generated_email = user_service.generate_and_update_email(
+            background_tasks.add_task(
+                execute_onboard_flow,
                 user_id=user_data["id"],
-                firstname=firstname,
-                lastname=lastname,
-                full_name=request.name,
-                settings=settings,
+                user_name=user_data["name"],
+                orchestrator=orchestrator,
+                user_db_path=settings.user_db_path,
             )
-            # Update user_data with generated email
-            user_data["emailid"] = generated_email
             logger.info(
-                "company_email_generated",
+                "onboard_flow_scheduled",
                 user_id=user_data["id"],
-                generated_email=generated_email,
+                user_name=user_data["name"],
             )
-        except UserServiceError as e:
-            # Log error but don't fail the onboarding - user is created, just email generation failed
-            logger.warning(
-                "email_generation_failed_but_user_created",
+        except Exception as e:
+            # Log error but don't fail the onboarding - user is created
+            logger.error(
+                "onboard_flow_scheduling_failed",
                 user_id=user_data["id"],
                 error=str(e),
+                error_type=type(e).__name__,
             )
-            # Continue with empty email if generation failed
 
         # Convert access_items_status to AccessItemStatus objects
         access_items = [
             AccessItemStatus(**item) for item in user_data["access_items_status"]
         ]
+        # Convert ai_live_reasoning to AILiveReasoningEntry objects
+        ai_reasoning = []
+        for entry in user_data.get("ai_live_reasoning", []):
+            if isinstance(entry, dict):
+                ai_reasoning.append(AILiveReasoningEntry(**entry))
+            elif isinstance(entry, str):
+                # Handle legacy string format (if any)
+                ai_reasoning.append(AILiveReasoningEntry(message=entry, timestamp=int(time.time() * 1000)))
 
         return UserResponse(
             id=user_data["id"],
@@ -240,6 +250,7 @@ async def onboard_user(
             manager=user_data["manager"],
             status=user_data["status"],
             access_items_status=access_items,
+            ai_live_reasoning=ai_reasoning,
         )
     except UserServiceError as exc:
         logger.error("onboard_user_failed", error=str(exc))
@@ -273,6 +284,14 @@ async def status_all(
             access_items = [
                 AccessItemStatus(**item) for item in user.get("access_items_status", [])
             ]
+            # Convert ai_live_reasoning to AILiveReasoningEntry objects
+            ai_reasoning = []
+            for entry in user.get("ai_live_reasoning", []):
+                if isinstance(entry, dict):
+                    ai_reasoning.append(AILiveReasoningEntry(**entry))
+                elif isinstance(entry, str):
+                    # Handle legacy string format (if any)
+                    ai_reasoning.append(AILiveReasoningEntry(message=entry, timestamp=int(time.time() * 1000)))
             result.append(
                 UserResponse(
                     id=user["id"],
@@ -286,6 +305,7 @@ async def status_all(
                     manager=user["manager"],
                     status=user["status"],
                     access_items_status=access_items,
+                    ai_live_reasoning=ai_reasoning,
                 )
             )
         return result
@@ -427,6 +447,14 @@ async def update_status(
         access_items = [
             AccessItemStatus(**item) for item in user_data["access_items_status"]
         ]
+        # Convert ai_live_reasoning to AILiveReasoningEntry objects
+        ai_reasoning = []
+        for entry in user_data.get("ai_live_reasoning", []):
+            if isinstance(entry, dict):
+                ai_reasoning.append(AILiveReasoningEntry(**entry))
+            elif isinstance(entry, str):
+                # Handle legacy string format (if any)
+                ai_reasoning.append(AILiveReasoningEntry(message=entry, timestamp=int(time.time() * 1000)))
 
         return UserResponse(
             id=user_data["id"],
@@ -440,6 +468,7 @@ async def update_status(
             manager=user_data["manager"],
             status=user_data["status"],
             access_items_status=access_items,
+            ai_live_reasoning=ai_reasoning,
         )
     except UserServiceError as exc:
         error_msg = str(exc)
@@ -462,5 +491,85 @@ async def update_status(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while updating user status.",
+        ) from exc
+
+
+class DeleteEmailRequest(BaseModel):
+    """Request model for deleting user email by name."""
+    name: str = Field(..., min_length=1, description="Name of the user whose email should be deleted")
+
+
+@router.delete("/delete_email_by_name", response_model=UserResponse, status_code=status.HTTP_200_OK)
+async def delete_email_by_name(
+    request: DeleteEmailRequest,
+    user_service: UserService = Depends(get_user_service),
+) -> UserResponse:
+    """
+    Delete email address for a user by name.
+    Sets the user's emailid to empty string.
+
+    Request body:
+        {
+            "name": "John Doe"
+        }
+
+    Returns:
+        UserResponse with updated user data (emailid will be empty string).
+
+    Raises:
+        404: If user with the given name is not found
+        500: If database operation fails
+    """
+    try:
+        logger.info("delete_email_by_name_received", name=request.name)
+
+        user_data = user_service.delete_user_email_by_name(request.name)
+
+        # Convert access_items_status to AccessItemStatus objects
+        access_items = [
+            AccessItemStatus(**item) for item in user_data.get("access_items_status", [])
+        ]
+        # Convert ai_live_reasoning to AILiveReasoningEntry objects
+        ai_reasoning = []
+        for entry in user_data.get("ai_live_reasoning", []):
+            if isinstance(entry, dict):
+                ai_reasoning.append(AILiveReasoningEntry(**entry))
+            elif isinstance(entry, str):
+                # Handle legacy string format (if any)
+                ai_reasoning.append(AILiveReasoningEntry(message=entry, timestamp=int(time.time() * 1000)))
+
+        return UserResponse(
+            id=user_data["id"],
+            name=user_data["name"],
+            emailid=user_data["emailid"],
+            contact_no=user_data["contact_no"],
+            location=user_data["location"],
+            date_of_joining=user_data["date_of_joining"],
+            level=user_data["level"],
+            team=user_data["team"],
+            manager=user_data["manager"],
+            status=user_data["status"],
+            access_items_status=access_items,
+            ai_live_reasoning=ai_reasoning,
+        )
+    except UserServiceError as exc:
+        error_msg = str(exc)
+        logger.error("delete_email_by_name_failed", name=request.name, error=error_msg)
+        
+        # Determine appropriate status code based on error message
+        if "not found" in error_msg.lower():
+            status_code = status.HTTP_404_NOT_FOUND
+        else:
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        
+        raise HTTPException(
+            status_code=status_code,
+            detail=error_msg,
+        ) from exc
+    except Exception as exc:
+        logger.error("unexpected_error", error=str(exc), error_type=type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while deleting user email.",
         ) from exc
 

@@ -94,6 +94,13 @@ class OnboardUserRequest(BaseModel):
     manager: str
 
 
+class AILiveReasoningEntry(BaseModel):
+    """Single entry in ai_live_reasoning array."""
+
+    message: str
+    timestamp: int  # Unix timestamp in milliseconds
+
+
 class UserResponse(BaseModel):
     """User response model."""
 
@@ -108,6 +115,7 @@ class UserResponse(BaseModel):
     manager: str
     status: str
     access_items_status: List[AccessItemStatus]
+    ai_live_reasoning: List[AILiveReasoningEntry] = Field(default_factory=list, description="AI live reasoning array with message and timestamp")
 
 
 class POCConfigEntry(BaseModel):
@@ -128,5 +136,3 @@ class UpdateUserStatusRequest(BaseModel):
         ...,
         description="List of access items to update with format [{'item': 'item_name', 'status': 'pending|in progress|completed'}]",
     )
-
-
